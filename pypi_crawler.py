@@ -1,6 +1,7 @@
 import json
 import os
 import re
+import sys
 import time
 import xmlrpc.client
 
@@ -69,7 +70,7 @@ class PyPI:
             client = xmlrpc.client.ServerProxy(PyPI.JSON_API_BASE)
             pkgs = client.list_packages()
         except Exception as e:
-            print(e)
+            print("XML-RPC API query error!", e, file=sys.stderr)
 
         if file_path is not None:
             with open(safe_open(file_path), "w") as f:
@@ -94,7 +95,7 @@ class PyPI:
             pattern = r"<a href=.*>(.*?)</a>"
             pkgs = re.findall(pattern, content)
         except Exception as e:
-            print("Error!", e)
+            print("Simple API query error!", e, file=sys.stderr)
 
         if file_path is not None:
             with open(safe_open(file_path), "w") as f:
@@ -128,7 +129,7 @@ class Package:
             versions = list(data["releases"].keys())
             return versions
         except Exception as e:
-            print(e)
+            print(f"Package metadata query for {self.name} error!", e, file=sys.stderr)
 
     def query_single_release(self, version: str, tofile=0):
         """Query the metadata of the given version
@@ -147,4 +148,4 @@ class Package:
                     json.dump(data, f, indent=4)
             return data
         except Exception as e:
-            print(e)
+            print(f"Release metadata query for {self.name} {version} error!", e, file=sys.stderr)
