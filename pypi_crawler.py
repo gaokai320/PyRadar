@@ -4,7 +4,7 @@ import re
 import sys
 import time
 import xmlrpc.client
-from typing import List
+from typing import List, Tuple
 
 import requests
 
@@ -63,7 +63,7 @@ class PyPI:
 
         ## if `update`` is False and `slef.name_file` exists, load data from the file and return.
         if (not update) and os.path.exists(self.name_file):
-            return list(json.load(open(self.name_file)).values())[0]
+            return json.load(open(self.name_file))["packages"]
 
         if api == "xmlrpc":
             return self.list_with_xmlrpc(update, dump)
@@ -80,18 +80,18 @@ class PyPI:
         """
 
         if (not update) and (os.path.exists(self.name_file)):
-            return list(json.load(open(self.name_file)).values())[0]
+            return json.load(open(self.name_file))["packages"]
 
         try:
             client = xmlrpc.client.ServerProxy(PyPI.JSON_API_BASE)
 
             # record current timestamp, for next package update use.
-            timestamp = time.time()
+            timestamp = int(time.time())
             pkgs = client.list_packages()
 
             if dump:
                 with open(safe_open(self.name_file), "w") as f:
-                    json.dump({timestamp: pkgs}, f, indent=4)
+                    json.dump({"timestamp": timestamp, "packages": pkgs}, f, indent=4)
 
             return pkgs
         except Exception as e:
@@ -111,12 +111,12 @@ class PyPI:
         """
 
         if (not update) and (os.path.exists(self.name_file)):
-            pkgs = list(json.load(open(self.name_file)).values())[0]
+            pkgs = json.load(open(self.name_file))["packages"]
             return pkgs
 
         try:
             # record current timestamp, for next package update use.
-            timestamp = time.time()
+            timestamp = int(time.time())
 
             response = requests.get(PyPI.SIMPLE_API_BASE_URL, timeout=timeout)
             response.raise_for_status()
@@ -126,12 +126,62 @@ class PyPI:
 
             if dump:
                 with open(safe_open(self.name_file), "w") as f:
-                    json.dump({timestamp: pkgs}, f, indent=4)
+                    json.dump({"timestamp": timestamp, "packages": pkgs}, f, indent=4)
 
             return pkgs
         except Exception as e:
             print("[ERROR]: Simple API query error!", e, file=sys.stderr)
             return []
+
+    @staticmethod
+    def new_releases_since(timestamp: int) -> List[Tuple[str, str, int]]:
+        """Given a timestamp, return all new releases since then.
+
+        Args:
+            timestamp (int): the timestamp used to query updates.
+
+        Returns:
+            List[(str, str, int)]: A tuple list. For each tuple, the first element is the package name, the second element is the package version, and the third element is the release's upload timestamp.
+        """
+        res = []
+        client = xmlrpc.client.ServerProxy(PyPI.JSON_API_BASE)
+        recent_changes = client.changelog(timestamp)
+        for entry in recent_changes:
+            if entry[3] == "new release":
+                res.append((entry[0], entry[1], int(entry[2])))
+        return res
+
+    def update(self) -> bool:
+        """Update package lists and store new releases information."""
+        if not os.path.exists(self.name_file):
+            print(
+                "Do not find the `names.json` file.",
+                "You should call `list_with_xmlrpc` method first!",
+                file=sys.stderr,
+            )
+            return False
+
+        old_dump = json.load(open(self.name_file))
+        old_ts = old_dump["timestamp"]
+        old_pkgs = old_dump["packages"]
+
+        new_releases = PyPI.new_releases_since(old_ts)
+
+        new_ts = 0
+        p2v = dict()
+        for p, v, t in new_releases:
+            if t > new_ts:
+                new_ts = t
+            old_pkgs.append(p)
+            p2v[p] = p2v.get(p, [])
+            p2v[p].append(v)
+
+        new_pkgs = list(set(old_pkgs))
+        with open(self.name_file, "w") as f:
+            json.dump({"timestamp": new_ts, "packages": new_pkgs}, f, indent=4)
+
+        with open(os.path.join(self.data_folder, "updates.json"), "w") as f:
+            json.dump(p2v, f, indent=4)
 
 
 class Package:

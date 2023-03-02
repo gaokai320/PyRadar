@@ -21,6 +21,7 @@ thread_id = args.thread
 thread_num = min(os.cpu_count() / 2, 40)
 assert thread_id < thread_num, f"Thread id should be less than {thread_num}!"
 
+
 def process(name: str):
     print(f"[INFO]: Start processing {name}", file=sys.stderr)
     p = Package(name=name, data_folder=os.path.join(data_folder, "metadata"))
