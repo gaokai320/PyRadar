@@ -10,7 +10,7 @@ from tqdm import tqdm
 db = MongoClient("127.0.0.1", 27017)["pypi"]
 col = db["release_metadata"]
 
-metadata_folder = sys.argv[1]
+metadata_folder = os.path.join(sys.argv[1], "metadata")
 packages = list(os.listdir(metadata_folder))
 
 info_keys = [
