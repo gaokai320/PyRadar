@@ -1,11 +1,11 @@
+import json
 import os
 import sys
-import json
-from tqdm import tqdm
 
 import pymongo
 from pymongo import MongoClient
 from pymongo.write_concern import WriteConcern
+from tqdm import tqdm
 
 db = MongoClient("127.0.0.1", 27017)["pypi"]
 col = db["release_metadata"]

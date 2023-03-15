@@ -2,12 +2,12 @@ import json
 import logging
 from urllib.parse import urlparse
 
+import networkx as nx
 import pandas as pd
 from packaging.markers import UndefinedEnvironmentName
 from packaging.requirements import InvalidRequirement, Requirement
 from pymongo import MongoClient
 from tqdm import tqdm
-import networkx as nx
 
 tqdm.pandas()
 # logger = logging.getLogger(__file__)

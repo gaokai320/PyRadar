@@ -13,7 +13,6 @@ from typing import List, Tuple
 import requests
 from joblib import Parallel, delayed
 from tqdm import tqdm
-from multiprocessing import get_logger
 
 
 def safe_open(path):
@@ -437,9 +436,7 @@ def main(pkgs, i, data_folder, email):
         format="%(asctime)s %(processName)s [%(levelname)s] %(message)s",
     )
     meta_folder = os.path.join(data_folder, "metadata")
-    batch_package_metadata(
-        pkgs, metadata_folder=meta_folder, email=email
-    )
+    batch_package_metadata(pkgs, metadata_folder=meta_folder, email=email)
 
 
 def dump_pypi_metadata(
