@@ -9,6 +9,7 @@ import xmlrpc.client
 from datetime import datetime, timezone
 from typing import List, Tuple
 
+from bs4 import BeautifulSoup
 import requests
 from joblib import Parallel, delayed
 from tqdm import tqdm
@@ -372,6 +373,31 @@ class Package:
         except Exception as e:
             logger.error(f"{self.name} {version}: Release metadata query error! {e}")
         return None, False
+
+    @staticmethod
+    def get_maintainers(name: str, timeout=10) -> List[str]:
+        maintainers = []
+        url = f"https://pypi.org/project/{name}/"
+        try:
+            response = requests.get(url, headers=headers, timeout=timeout)
+            response.raise_for_status()
+        except requests.HTTPError as e:
+            logger.error(f"{name}, {e}")
+            return []
+        soup = BeautifulSoup(response.text, "lxml")
+
+        try:
+            vertical_tabs = soup.find("div", {"class": "vertical-tabs__tabs"})
+            for sidebar in vertical_tabs.find_all("div", {"class": "sidebar-section"}):
+                title = sidebar.find("h3", {"class": "sidebar-section__title"})
+                if title.text != "Maintainers":
+                    continue
+                for span in sidebar.find_all("span", {"class": "sidebar-section__maintainer"}):
+                    t = span.find("span", {"class": "sidebar-section__user-gravatar-text"}).text
+                    maintainers.append(t.strip(" \n"))
+        except:
+            logger.error(f"{name}")
+        return maintainers
 
 
 def batch_package_metadata(pkgs: list, metadata_folder: str, email: str = None):
