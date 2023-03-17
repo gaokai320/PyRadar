@@ -3,7 +3,6 @@ import logging
 import os
 import random
 import re
-import sys
 import time
 import xml.etree.ElementTree as ET
 import xmlrpc.client
@@ -13,6 +12,9 @@ from typing import List, Tuple
 import requests
 from joblib import Parallel, delayed
 from tqdm import tqdm
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 def safe_open(path):
@@ -26,9 +28,7 @@ headers = {
 proxies = {"http": "http://127.0.0.1:10805", "https": "http://127.0.0.1:10805"}
 
 
-def _single_get(url: str, headers: dict, timeout: int = 5, logger=None):
-    if not logger:
-        logger = logging.getLogger()
+def _single_get(url: str, headers: dict, timeout: int = 5):
     try:
         r = requests.get(url, headers=headers, timeout=timeout, proxies=proxies)
         if r.status_code == 404:
@@ -41,16 +41,12 @@ def _single_get(url: str, headers: dict, timeout: int = 5, logger=None):
         return None
 
 
-def my_get(
-    url: str, headers: dict, timeout: int = 5, email: str = None, repeat=0, logger=None
-):
-    if not logger:
-        logger = logging.getLogger()
+def my_get(url: str, headers: dict, timeout: int = 5, email: str = None, repeat=0):
     if email:
         headers["email"] = email
     if repeat > 0:
         for _ in range(repeat):
-            r = _single_get(url, headers=headers, timeout=timeout, logger=logger)
+            r = _single_get(url, headers=headers, timeout=timeout)
             if r == 404:
                 return None
             if r:
@@ -58,7 +54,7 @@ def my_get(
         return None
     else:
         while True:
-            r = _single_get(url, headers=headers, timeout=timeout, logger=logger)
+            r = _single_get(url, headers=headers, timeout=timeout)
             if r == 404:
                 return None
             if r:
@@ -123,9 +119,7 @@ class PyPI:
             return self.list_with_simple(update, dump, timeout, email)
         return []
 
-    def list_with_xmlrpc(
-        self, update: bool = True, dump: bool = False, logger=None
-    ) -> List[str]:
+    def list_with_xmlrpc(self, update: bool = True, dump: bool = False) -> List[str]:
         """List packages names with XML-RPC API.
 
         Args:
@@ -135,9 +129,6 @@ class PyPI:
 
         if (not update) and (os.path.exists(self.name_file)):
             return json.load(open(self.name_file))["packages"]
-
-        if not logger:
-            logger = logging.getLogger()
 
         try:
             client = xmlrpc.client.ServerProxy(PyPI.JSON_API_BASE)
@@ -200,7 +191,7 @@ class PyPI:
                 return pkgs
             return []
         except Exception as e:
-            logging.error(f"Simple API query error! {e}")
+            logger.error(f"Simple API query error! {e}")
             return []
 
     @staticmethod
@@ -230,7 +221,7 @@ class PyPI:
         assert api in ["xmlrpc", "rss"], "The API should be 'xmlrpc' or 'rss'."
 
         if not os.path.exists(self.name_file):
-            logging.error(
+            logger.error(
                 "Do not find the `names.json` file. "
                 + "You should call `list_all_packages` method first!"
             )
@@ -307,7 +298,6 @@ class Package:
         dump: bool = False,
         email: str = None,
         timeout: int = 65,
-        logger=None,
     ):
         """Return all versions of the package. This piece information can be accessed by both JSON API and XML-RPC API. Since XML-RPC API will be deprecated, here only uses the JSON API.
 
@@ -317,8 +307,6 @@ class Package:
             email (str): the email in `requests.get` headers. Defaults to None.
         """
         file_path = os.path.join(self.data_folder, f"{self.name}.json")
-        if not logger:
-            logger = logging.getLogger()
 
         if (not update) and os.path.exists(file_path):
             data = json.load(open(file_path))
@@ -331,7 +319,6 @@ class Package:
                 PyPI.JSON_API_BASE + f"/{self.name}/json",
                 headers=headers,
                 timeout=timeout,
-                logger=logger,
             )
             if r:
                 data = r.json()
@@ -345,12 +332,7 @@ class Package:
             return []
 
     def query_single_release(
-        self,
-        version: str,
-        dump: bool = False,
-        email: str = None,
-        timeout: int = 60,
-        logger=None,
+        self, version: str, dump: bool = False, email: str = None, timeout: int = 60
     ):
         """Query the metadata of the given version
 
@@ -364,8 +346,6 @@ class Package:
         """
 
         file_path = os.path.join(self.data_folder, f"{version}.json")
-        if not logger:
-            logger = logging.getLogger()
 
         if os.path.exists(file_path):
             data = json.load(open(file_path))
@@ -379,7 +359,6 @@ class Package:
                 PyPI.JSON_API_BASE + f"/{self.name}/{version}/json",
                 headers=headers,
                 timeout=timeout,
-                logger=logger,
             )
             if r:
                 r.raise_for_status()
@@ -395,22 +374,18 @@ class Package:
         return None, False
 
 
-def batch_package_metadata(
-    pkgs: list, metadata_folder: str, email: str = None, logger=None
-):
-    if not logger:
-        logger = logging.getLogger()
+def batch_package_metadata(pkgs: list, metadata_folder: str, email: str = None):
     for name in pkgs:
         logger.info(f"{name}: Start processing......")
         pkg_folder = os.path.join(metadata_folder, name)
 
         p = Package(name=name, data_folder=metadata_folder)
-        vs = p.get_versions(update=False, dump=True, email=email, logger=logger)
+        vs = p.get_versions(update=False, dump=True, email=email)
         if os.path.exists(pkg_folder) and (len(os.listdir(pkg_folder)) == len(vs) + 1):
             logger.info(f"{name}: Already queryed all the metadata")
             return
         for v in vs:
-            _, hit = p.query_single_release(v, dump=True, email=email, logger=logger)
+            _, hit = p.query_single_release(v, dump=True, email=email)
             if not hit:
                 time.sleep(random.randint(2, 10) * 0.01)
         logger.info(f"{name}: Finish processing")
@@ -422,13 +397,6 @@ def chunks(lst: list, n: int):
 
 
 def main(pkgs, i, data_folder, email):
-    # logger = get_logger()
-    # logger.setLevel(logging.INFO)
-    # fh = logging.FileHandler(filename=f"log/collect_pypi_metadata-{i}.log")
-    # fmter = logging.Formatter("%(asctime)s %(processName)s [%(levelname)s] %(message)s")
-    # fh.setFormatter(fmter)
-    # fh.setLevel(logging.INFO)
-    # logger.addHandler(fh)
     logging.basicConfig(
         filename=f"log/collect_pypi_metadata-{i}.log",
         filemode="w",
