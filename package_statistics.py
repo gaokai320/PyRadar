@@ -114,6 +114,7 @@ def get_downloads_data():
     package_downloads = pd.DataFrame(package_downloads, columns=["name", "downloads"])
 
     df = pd.read_csv("data/package_specify_repos.csv")
+    package_downloads = package_downloads[package_downloads["name"].isin(df["name"])]
     pkgs_with_repos = df[df["specify_repo"]]["name"]
     package_downloads["specify_repo"] = False
     package_downloads.loc[
