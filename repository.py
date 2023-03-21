@@ -22,29 +22,31 @@ class Repository:
         """
         self.url = url.strip("/")
         self.data_folder = data_folder
-        repo_path = os.path.join(self.data_folder, "repo")
+        self.repo_path = os.path.join(self.data_folder, "repo")
         self.repo = None
 
         # try to open the repository
-        if os.path.exists(repo_path):
+        if os.path.exists(self.repo_path):
             try:
-                self.repo = Repo(repo_path, odbt=GitDB)
-                logger.info(f"Load repository from {repo_path} successfully")
+                self.repo = Repo(self.repo_path, odbt=GitDB)
+                logger.info(f"Load repository from {self.repo_path} successfully")
             except InvalidGitRepositoryError as e:
-                logger.error(f"{repo_path} is not a valid git repository")
-                shutil.rmtree(repo_path)
+                logger.error(f"{self.repo_path} is not a valid git repository")
+                shutil.rmtree(self.repo_path)
 
         # if not a valid git repository, clone it
         if not self.repo:
             try:
-                self.repo = Repo.clone_from(self.url, repo_path, odbt=GitDB)
+                self.repo = Repo.clone_from(
+                    self.url, self.repo_path, odbt=GitDB, recurse_submodules=True
+                )
                 logger.info(
-                    f"Clone repository from {self.url} to {repo_path} successfully"
+                    f"Clone repository from {self.url} to {self.repo_path} successfully"
                 )
             except GitCommandError as e:
                 logger.error(f"Failed to clone repository {self.url}. {e.stderr}")
                 raise FileNotFoundError(
-                    f"Fail to clone repository from {self.url} to {repo_path}"
+                    f"Fail to clone repository from {self.url} to {self.repo_path}"
                 )
 
     @cached_property
@@ -59,7 +61,7 @@ class Repository:
                 ).split("\n")
 
                 for obj in output:
-                    obj_sha, obj_type, obj_size = obj.split(" ")
+                    obj_sha, obj_type, _ = obj.split(" ")
                     if obj_type in ["commit", "tree", "blob"]:
                         object_shas[obj_type].append(obj_sha)
             except Exception as e:
@@ -80,7 +82,23 @@ class Repository:
     @cached_property
     def blob_shas(self) -> List:
         """a sha list of all blob objects"""
-        return self.object_shas["blob"]
+
+        # this will also change object_shas due to Python's reference mechanism, but it's fine.
+        res = self.object_shas["blob"]
+        for sm in self.repo.submodules:
+            logger.info(f"listing blobs in submodule {sm.path}")
+            try:
+                r = Repo(os.path.join(self.repo_path, sm.path), odbt=GitDB)
+                output = r.git.cat_file(batch_check=True, batch_all_objects=True, unordered=True).split("\n")
+
+                for obj in output:
+                    obj_sha, obj_type, _ = obj.split(" ")
+                    if obj_type == "blob":
+                        res.append(obj_sha)
+            except Exception as e:
+                logger.error(e)
+        
+        return res
 
     def _snapshot(self, commit_sha: str) -> List[Tuple[str, str]]:
         """get the repository's folder structure of a commit
@@ -93,13 +111,21 @@ class Repository:
         """
         commit = self.repo.commit(commit_sha)
         files = []
-        unchecked = [commit.tree]
+        unchecked = [(commit.tree, "")]
         while len(unchecked) > 0:
-            tree = unchecked.pop()
+            tree, root_path = unchecked.pop()
             for blob in tree.blobs:
-                files.append((blob.path, blob.hexsha))
+                files.append((os.path.join(root_path, blob.name), blob.hexsha))
             for t in tree.trees:
-                unchecked.append(t)
+                unchecked.append((t, os.path.join(root_path, t.name)))
+            if len(tree) != len(tree.blobs) + len(tree.trees):
+                items = []
+                for row in tree.repo.git.cat_file("-p", tree.hexsha).split("\n"):
+                    mode, obj_type, _ = row.split(" ")
+                    if obj_type == "commit":
+                        sha, name = _.split("\t")
+                        sm = Repo(os.path.join(tree.abspath, name), odbt=GitDB).commit(sha).tree
+                        unchecked.append((sm, os.path.join(root_path, name)))
         return files
 
     def commit_snapshots(self) -> Dict[str, Dict[str, List]]:
