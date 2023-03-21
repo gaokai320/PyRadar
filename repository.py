@@ -5,7 +5,8 @@ import shutil
 from functools import cached_property
 from typing import Dict, List, Tuple
 
-from git import GitCommandError, InvalidGitRepositoryError, Repo
+from tqdm import tqdm
+from git import GitCommandError, InvalidGitRepositoryError, Repo, GitDB
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -27,7 +28,7 @@ class Repository:
         # try to open the repository
         if os.path.exists(repo_path):
             try:
-                self.repo = Repo(repo_path)
+                self.repo = Repo(repo_path, odbt=GitDB)
                 logger.info(f"Load repository from {repo_path} successfully")
             except InvalidGitRepositoryError as e:
                 logger.error(f"{repo_path} is not a valid git repository")
@@ -36,7 +37,7 @@ class Repository:
         # if not a valid git repository, clone it
         if not self.repo:
             try:
-                self.repo = Repo.clone_from(self.url, repo_path)
+                self.repo = Repo.clone_from(self.url, repo_path, odbt=GitDB)
                 logger.info(
                     f"Clone repository from {self.url} to {repo_path} successfully"
                 )
@@ -59,7 +60,8 @@ class Repository:
 
                 for obj in output:
                     obj_sha, obj_type, obj_size = obj.split(" ")
-                    object_shas[obj_type].append(obj_sha)
+                    if obj_type in ["commit", "tree", "blob"]:
+                        object_shas[obj_type].append(obj_sha)
             except Exception as e:
                 logger.error(e)
         logger.info("finish listing all git objects")
@@ -111,13 +113,12 @@ class Repository:
             logger.info(f"commit_snapshots.json already exists")
             return json.load(open(save_file_path))
         res = {}
-        for sha in self.commit_shas:
-            res[sha] = {}
-            res[sha]["timestamp"] = self.repo.commit(sha).authored_date
-            files = self._snapshot(sha)
+        for commit in tqdm(self.commit_shas, ascii=" >="):
+            res[commit] = {"timestamp": 0, "file_shas": []}
+            res[commit]["timestamp"] = self.repo.commit(commit).authored_date
+            files = self._snapshot(commit)
             for blob_name, blob_sha in files:
-                res[sha][blob_sha] = res[sha].get(blob_sha, [])
-                res[sha][blob_sha].append(blob_name)
+                res[commit]["file_shas"].append((blob_name, blob_sha))
         with open(save_file_path, "w") as outf:
             logger.info("dump commit_snapshots to commit_snapshots.json")
             json.dump(res, outf)
