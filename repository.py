@@ -1,59 +1,69 @@
+import configparser
 import json
 import logging
 import os
 import shutil
 from functools import cached_property
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+from urllib.parse import urlparse
 
+import git
+from git import GitCommandError, GitDB, InvalidGitRepositoryError, Repo
 from tqdm import tqdm
-from git import GitCommandError, InvalidGitRepositoryError, Repo, GitDB
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
+def assemble_repo_folder(url: str, base_folder: str) -> str:
+    parsed = urlparse(url)
+    return os.path.join(
+        base_folder, "repository", parsed.netloc, parsed.path.strip("/")
+    )
+
+
 class Repository:
-    def __init__(self, url: str, data_folder: str) -> None:
+    def __init__(self, url: str, base_folder: str) -> None:
         """Create a wrapped `gitpython.Repo` object.
 
         Args:
             url (str): the remote repository url
-            data_folder (str): the folder that stores repository data. The folder will include a `repo` folder with the cloned repository and a `commit_snapshots.json` file with the folder structure information of each commit.
+            base_folder (str): the folder that stores repository and relevant data.
         """
         self.url = url.strip("/")
-        self.data_folder = data_folder
+        self.data_folder = assemble_repo_folder(url, base_folder)
         self.repo_path = os.path.join(self.data_folder, "repo")
-        self.repo = None
+        self.repo = Repository.safe_open()
 
+    @staticmethod
+    def safe_open(repo_path, url) -> Optional[Repo]:
+        repo = None
         # try to open the repository
-        if os.path.exists(self.repo_path):
+        if os.path.exists(repo_path):
             try:
-                self.repo = Repo(self.repo_path, odbt=GitDB)
-                logger.info(f"Load repository from {self.repo_path} successfully")
+                repo = Repo(repo_path, odbt=GitDB)
+                logger.info(f"Load repository from {repo_path} successfully")
             except InvalidGitRepositoryError as e:
-                logger.error(f"{self.repo_path} is not a valid git repository")
-                shutil.rmtree(self.repo_path)
+                logger.error(f"{repo_path} is not a valid git repository")
+                shutil.rmtree(repo_path)
 
         # if not a valid git repository, clone it
-        if not self.repo:
+        if not repo:
             try:
-                self.repo = Repo.clone_from(
-                    self.url, self.repo_path, odbt=GitDB, recurse_submodules=True
-                )
-                logger.info(
-                    f"Clone repository from {self.url} to {self.repo_path} successfully"
-                )
+                repo = Repo.clone_from(url, repo_path, odbt=GitDB)
+                logger.info(f"Clone repository from {url} to {repo_path} successfully")
             except GitCommandError as e:
-                logger.error(f"Failed to clone repository {self.url}. {e.stderr}")
+                logger.error(f"Failed to clone repository {url}. {e.stderr}")
                 raise FileNotFoundError(
-                    f"Fail to clone repository from {self.url} to {self.repo_path}"
+                    f"Fail to clone repository from {url} to {repo_path}"
                 )
+        return repo
 
     @cached_property
     def object_shas(self) -> Dict[str, List]:
         """a dict containing shas of all commit, tree, and blob objects."""
         logger.info("start listing all git objects")
-        object_shas = {"commit": [], "tree": [], "blob": []}
+        object_shas = {"commit": [], "tree": [], "blob": [], "tag": []}
         if self.repo:
             try:
                 output = self.repo.git.cat_file(
@@ -62,7 +72,7 @@ class Repository:
 
                 for obj in output:
                     obj_sha, obj_type, _ = obj.split(" ")
-                    if obj_type in ["commit", "tree", "blob"]:
+                    if obj_type in ["commit", "tree", "blob", "tag"]:
                         object_shas[obj_type].append(obj_sha)
             except Exception as e:
                 logger.error(e)
@@ -89,7 +99,9 @@ class Repository:
             logger.info(f"listing blobs in submodule {sm.path}")
             try:
                 r = Repo(os.path.join(self.repo_path, sm.path), odbt=GitDB)
-                output = r.git.cat_file(batch_check=True, batch_all_objects=True, unordered=True).split("\n")
+                output = r.git.cat_file(
+                    batch_check=True, batch_all_objects=True, unordered=True
+                ).split("\n")
 
                 for obj in output:
                     obj_sha, obj_type, _ = obj.split(" ")
@@ -97,8 +109,58 @@ class Repository:
                         res.append(obj_sha)
             except Exception as e:
                 logger.error(e)
-        
+
         return res
+
+    @staticmethod
+    def parse_gitmodules(file: str) -> Dict[str, str]:
+        config = configparser.ConfigParser()
+        config.read_string(file)
+        sms = {}
+        for section in config.sections():
+            path = config[section]["path"]
+            url = config[section]["url"]
+            sms[path] = url
+        return sms
+
+    @staticmethod
+    def traverse(
+        commit: git.Commit, root_path="", base_folder: str = None
+    ) -> List[Tuple[str, str]]:
+        files = []
+        sms = {}
+
+        root_tree = commit.tree
+        repo = root_tree.repo
+        unchecked = [(root_tree, "")]
+        while len(unchecked) > 0:
+            tree, path = unchecked.pop()
+            for item in repo.git.cat_file("-p", tree.hexsha).split("\n"):
+                _obj, obj_type, sha_name = item.split(" ", 2)
+                sha, name = sha_name.split("\t", 1)
+                if obj_type == "blob":
+                    files.append((sha, os.path.join(path, name)))
+                    if (not sms) and (name == ".gitmodules"):
+                        gitmodules_content = repo.git.cat_file("-p", sha)
+                        sms = Repository.parse_gitmodules(gitmodules_content)
+                        print(sms)
+                elif obj_type == "tree":
+                    unchecked.append((repo.tree(sha), os.path.join(path, name)))
+                elif obj_type == "commit":
+                    sm_path = os.path.join(path, name)
+                    print(sm_path)
+                    if sm_path in sms:
+                        url = sms[sm_path]
+                        repo_path = os.path.join(
+                            assemble_repo_folder(url, base_folder), "repo"
+                        )
+                        tmp_repo = Repository.safe_open(repo_path, url)
+                        sm_files = Repository.traverse(
+                            tmp_repo.commit(sha), sm_path, base_folder
+                        )
+                        files.extend(sm_files)
+
+        return [(sha, os.path.join(root_path, path)) for sha, path in files]
 
     def _snapshot(self, commit_sha: str) -> List[Tuple[str, str]]:
         """get the repository's folder structure of a commit
@@ -124,7 +186,11 @@ class Repository:
                     mode, obj_type, _ = row.split(" ")
                     if obj_type == "commit":
                         sha, name = _.split("\t")
-                        sm = Repo(os.path.join(tree.abspath, name), odbt=GitDB).commit(sha).tree
+                        sm = (
+                            Repo(os.path.join(tree.abspath, name), odbt=GitDB)
+                            .commit(sha)
+                            .tree
+                        )
                         unchecked.append((sm, os.path.join(root_path, name)))
         return files
 
