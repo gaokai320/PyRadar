@@ -3,19 +3,30 @@ import json
 import logging
 import os
 import shutil
-from functools import cached_property
-from typing import Dict, List, Tuple, Optional
+from functools import cached_property, lru_cache
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
 import git
 from git import GitCommandError, GitDB, InvalidGitRepositoryError, Repo
 from tqdm import tqdm
+import networkx as nx
+import pickle
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 
 def assemble_repo_folder(url: str, base_folder: str) -> str:
+    """Assemble the folder path for a repository based on its remote url.
+
+    Args:
+        url (str): the remote repository url
+        base_folder (str): the folder that stores repository and relevant data.
+
+    Returns:
+        str: the folder path for the repository
+    """
     parsed = urlparse(url)
     return os.path.join(
         base_folder, "repository", parsed.netloc, parsed.path.strip("/")
@@ -33,10 +44,22 @@ class Repository:
         self.url = url.strip("/")
         self.data_folder = assemble_repo_folder(url, base_folder)
         self.repo_path = os.path.join(self.data_folder, "repo")
-        self.repo = Repository.safe_open()
+        self.repo = Repository.safe_open(self.repo_path, self.url)
 
     @staticmethod
-    def safe_open(repo_path, url) -> Optional[Repo]:
+    def safe_open(repo_path: str, url: str) -> Optional[Repo]:
+        """Open a repository from `repo_path`. If not a valid git repository, clone it from `url`.
+
+        Args:
+            repo_path (str): the path to the repository
+            url (str): the url of the remote repository
+
+        Raises:
+            FileNotFoundError: if failed to open the repository
+
+        Returns:
+            Optional[Repo]: the git.Repo object
+        """
         repo = None
         # try to open the repository
         if os.path.exists(repo_path):
@@ -60,8 +83,8 @@ class Repository:
         return repo
 
     @cached_property
-    def object_shas(self) -> Dict[str, List]:
-        """a dict containing shas of all commit, tree, and blob objects."""
+    def object_shas(self) -> Dict[str, List[str]]:
+        """use the command `git cat-file --batch-check --batch-all-objects --unordered` to list all git objects"""
         logger.info("start listing all git objects")
         object_shas = {"commit": [], "tree": [], "blob": [], "tag": []}
         if self.repo:
@@ -80,42 +103,32 @@ class Repository:
         return object_shas
 
     @cached_property
-    def tree_shas(self) -> List:
-        """a sha list of all tree objects"""
+    def tree_shas(self) -> List[str]:
+        """a list of all tree object shas"""
         return self.object_shas["tree"]
 
     @cached_property
-    def commit_shas(self) -> List:
-        """ "a sha list of all commit objects"""
+    def commit_shas(self) -> List[str]:
+        """a list of all commit object shas"""
         return self.object_shas["commit"]
 
     @cached_property
-    def blob_shas(self) -> List:
-        """a sha list of all blob objects"""
-
-        # this will also change object_shas due to Python's reference mechanism, but it's fine.
-        res = self.object_shas["blob"]
-        for sm in self.repo.submodules:
-            logger.info(f"listing blobs in submodule {sm.path}")
-            try:
-                r = Repo(os.path.join(self.repo_path, sm.path), odbt=GitDB)
-                output = r.git.cat_file(
-                    batch_check=True, batch_all_objects=True, unordered=True
-                ).split("\n")
-
-                for obj in output:
-                    obj_sha, obj_type, _ = obj.split(" ")
-                    if obj_type == "blob":
-                        res.append(obj_sha)
-            except Exception as e:
-                logger.error(e)
-
+    def tag_shas(self) -> Dict[str, str]:
+        """a dict of tag object names (e.g., v0.1.0) with the commit shas they point to"""
+        res = {}
+        for tag in self.repo.tags:
+            res[tag.name] = tag.commit.hexsha
         return res
 
     @staticmethod
-    def parse_gitmodules(file: str) -> Dict[str, str]:
+    def parse_gitmodules(content: str) -> Dict[str, str]:
+        """parse the .gitmodules file and return a dict of submodule paths and corresponding urls
+
+        Args:
+            content (str): the content of the .gitmodules file
+        """
         config = configparser.ConfigParser()
-        config.read_string(file)
+        config.read_string(content)
         sms = {}
         for section in config.sections():
             path = config[section]["path"]
@@ -124,97 +137,138 @@ class Repository:
         return sms
 
     @staticmethod
+    @lru_cache(maxsize=1000)
     def traverse(
-        commit: git.Commit, root_path="", base_folder: str = None
+        root_tree: git.Tree, root_path="", base_folder: str = None
     ) -> List[Tuple[str, str]]:
+        """traverse the tree object and return a list of (filename, sha) pairs
+
+        Args:
+            root_tree (git.Tree): the root tree object to traverse
+            root_path (str, optional): the root path of the tree. Defaults to "".
+            base_folder (str, optional): the folder that stores repository and relevant data. Defaults to None.
+
+        Returns:
+            List[Tuple[str, str]]: a list containing the filenames and corresponding hex shas.
+        """
         files = []
         sms = {}
 
-        root_tree = commit.tree
         repo = root_tree.repo
+        logger.info(f"traversing tree {root_tree.hexsha} in repository {repo}")
+
+        # unchecked stores the tree objects that are not traversed yet
         unchecked = [(root_tree, "")]
         while len(unchecked) > 0:
             tree, path = unchecked.pop()
             for item in repo.git.cat_file("-p", tree.hexsha).split("\n"):
                 _obj, obj_type, sha_name = item.split(" ", 2)
                 sha, name = sha_name.split("\t", 1)
+
+                # if the object is a blob, add it to the list
                 if obj_type == "blob":
                     files.append((sha, os.path.join(path, name)))
+
+                    # only consider .gitmodules file in the root folder
                     if (not sms) and (name == ".gitmodules"):
                         gitmodules_content = repo.git.cat_file("-p", sha)
                         sms = Repository.parse_gitmodules(gitmodules_content)
-                        print(sms)
+                        logger.info(f"submodules detected: {sms}")
+
+                # if the object is a tree, add it to the unchecked list
                 elif obj_type == "tree":
                     unchecked.append((repo.tree(sha), os.path.join(path, name)))
+
+                # if the object is a commit (i.e., submodule), traverse its root tree.
                 elif obj_type == "commit":
                     sm_path = os.path.join(path, name)
-                    print(sm_path)
+                    logger.info(f"entering submodule {sm_path}")
                     if sm_path in sms:
                         url = sms[sm_path]
+
+                        # if base_folder is not specified, try to get it from the environment variable
+                        if base_folder is None:
+                            base_folder = os.environ.get("DATA_HOME", None)
+                        # if base_folder is still None, raise an error
+                        if base_folder is None:
+                            raise FileNotFoundError("base_folder is not specified")
+
+                        # traverse the submodule
                         repo_path = os.path.join(
                             assemble_repo_folder(url, base_folder), "repo"
                         )
                         tmp_repo = Repository.safe_open(repo_path, url)
                         sm_files = Repository.traverse(
-                            tmp_repo.commit(sha), sm_path, base_folder
+                            tmp_repo.commit(sha).tree, sm_path, base_folder
                         )
                         files.extend(sm_files)
 
         return [(sha, os.path.join(root_path, path)) for sha, path in files]
 
-    def _snapshot(self, commit_sha: str) -> List[Tuple[str, str]]:
-        """get the repository's folder structure of a commit
+    def snapshot(self, commit_sha: str) -> List[Tuple[str, str]]:
+        """get the folder structure of a commit
 
         Args:
-            commit_sha (str): the hex sha of a commit object
+            commit_sha (str): the commit sha
 
         Returns:
             List[Tuple[str, str]]: a list containing the filenames and corresponding hex shas.
         """
         commit = self.repo.commit(commit_sha)
-        files = []
-        unchecked = [(commit.tree, "")]
-        while len(unchecked) > 0:
-            tree, root_path = unchecked.pop()
-            for blob in tree.blobs:
-                files.append((os.path.join(root_path, blob.name), blob.hexsha))
-            for t in tree.trees:
-                unchecked.append((t, os.path.join(root_path, t.name)))
-            if len(tree) != len(tree.blobs) + len(tree.trees):
-                items = []
-                for row in tree.repo.git.cat_file("-p", tree.hexsha).split("\n"):
-                    mode, obj_type, _ = row.split(" ")
-                    if obj_type == "commit":
-                        sha, name = _.split("\t")
-                        sm = (
-                            Repo(os.path.join(tree.abspath, name), odbt=GitDB)
-                            .commit(sha)
-                            .tree
-                        )
-                        unchecked.append((sm, os.path.join(root_path, name)))
-        return files
+        return Repository.traverse(
+            root_tree=commit.tree,
+            root_path="",
+            base_folder=os.environ.get("DATA_HOME", None),
+        )
 
-    def commit_snapshots(self) -> Dict[str, Dict[str, List]]:
-        """get the repository folder structure for all commits and dump the results to a json file.
+    @cached_property
+    def blob_shas(self) -> List[str]:
+        """return a list of all blob shas, at the same time, save the bipartite graph of commits and blobs to a pickle file
 
         Returns:
-            Dict[str, Dict[str, List]]: keys are hex shas of commits, values are dicts whose key are hex shas of blob objects and values are filenames. If two files' contents are the exactly same, their blob shas are also same. So a blob may correspond to multiple filenames.
+            List[str]: a list of all blob shas
         """
-        save_file_path = os.path.join(self.data_folder, "commit_snapshots.json")
+
+        save_file_path = os.path.join(self.data_folder, "commit_blob_bipartie.pickle")
         if os.path.exists(save_file_path):
-            logger.info(f"commit_snapshots.json already exists")
-            return json.load(open(save_file_path))
-        res = {}
+            logger.info(f"loading from commit_blob_bipartie.pickle")
+            B = pickle.load(open(save_file_path, "rb"))
+            return list({n for n, d in B.nodes(data=True) if d["type"] == "blob"})
+
+        blobs = []
+        edges = []
+
+        B = nx.Graph()
+
         for commit in tqdm(self.commit_shas, ascii=" >="):
-            res[commit] = {"timestamp": 0, "file_shas": []}
-            res[commit]["timestamp"] = self.repo.commit(commit).authored_date
-            files = self._snapshot(commit)
-            for blob_name, blob_sha in files:
-                res[commit]["file_shas"].append((blob_name, blob_sha))
-        with open(save_file_path, "w") as outf:
-            logger.info("dump commit_snapshots to commit_snapshots.json")
-            json.dump(res, outf)
-        return res
+            ts = self.repo.commit(commit).authored_date
+            B.add_node(commit, type="commit", timestamp=ts)
+
+            # different files may have the same blob sha
+            tmp = {}
+            for blob_sha, blob_name in self.snapshot(commit):
+                blobs.append(blob_sha)
+                tmp[blob_sha] = tmp.get(blob_sha, [])
+                tmp[blob_sha].append(blob_name)
+            for blob_sha, blob_names in tmp.items():
+                edges.append((commit, blob_sha, {"filename": blob_names}))
+
+        blobs = list(set(blobs))
+        B.add_nodes_from(blobs, type="blob")
+        B.add_edges_from(edges)
+
+        with open(save_file_path, "wb") as outf:
+            logger.info("dumping to commit_blob_bipartie.pickle")
+            pickle.dump(B, outf)
+        return blobs
 
     def read_blob_content(self, blob_sha: str) -> str:
+        """read the content of a blob object
+
+        Args:
+            blob_sha (str): the blob sha
+
+        Returns:
+            str: the content of the blob object
+        """
         return self.repo.git.cat_file("-p", blob_sha)
