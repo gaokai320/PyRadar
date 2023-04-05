@@ -131,3 +131,5 @@ log/
 .vscode/
 data/
 figures/
+.idea/
+tests/

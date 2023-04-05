@@ -165,6 +165,8 @@ class Repository:
         # while len(unchecked) > 0:
         #     tree, path = unchecked.pop()
         for item in repo.git.cat_file("-p", root_tree.hexsha).split("\n"):
+            if item == "":
+                continue
             _, obj_type, sha_name = item.split(" ", 2)
             sha, name = sha_name.split("\t", 1)
 
@@ -250,6 +252,7 @@ class Repository:
         bg = nx.Graph()
 
         for commit in tqdm(self.commit_shas, ascii=" >="):
+            logger.info(f"start listing commit {commit}")
             ts = self.repo.commit(commit).authored_date
             bg.add_node(commit, type="commit", timestamp=ts)
 
@@ -261,6 +264,7 @@ class Repository:
                 tmp[blob_sha].append(blob_name)
             for blob_sha, blob_names in tmp.items():
                 edges.append((commit, blob_sha, {"filename": blob_names}))
+            logger.info(f"finish listing commit {commit}")
 
         blobs = list(set(blobs))
         bg.add_nodes_from(blobs, type="blob")
