@@ -1,9 +1,8 @@
 import configparser
-import json
 import logging
 import os
 import shutil
-from functools import cached_property, lru_cache
+from functools import cached_property
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
@@ -45,6 +44,7 @@ class Repository:
         self.data_folder = assemble_repo_folder(url, base_folder)
         self.repo_path = os.path.join(self.data_folder, "repo")
         self.repo = Repository.safe_open(self.repo_path, self.url)
+        self.tree_cache = {}
 
     @staticmethod
     def safe_open(repo_path: str, url: str) -> Optional[Repo]:
@@ -66,7 +66,7 @@ class Repository:
             try:
                 repo = Repo(repo_path, odbt=GitDB)
                 logger.info(f"Load repository from {repo_path} successfully")
-            except InvalidGitRepositoryError as e:
+            except InvalidGitRepositoryError:
                 logger.error(f"{repo_path} is not a valid git repository")
                 shutil.rmtree(repo_path)
 
@@ -136,10 +136,8 @@ class Repository:
             sms[path] = url
         return sms
 
-    @staticmethod
-    @lru_cache(maxsize=1000)
     def traverse(
-        root_tree: git.Tree, root_path="", base_folder: str = None
+        self, root_tree: git.Tree, root_path="", base_folder: str = None, sms: dict = {}
     ) -> List[Tuple[str, str]]:
         """traverse the tree object and return a list of (filename, sha) pairs
 
@@ -147,63 +145,73 @@ class Repository:
             root_tree (git.Tree): the root tree object to traverse
             root_path (str, optional): the root path of the tree. Defaults to "".
             base_folder (str, optional): the folder that stores repository and relevant data. Defaults to None.
+            sms (str): a dict of submodules with submodule path and url.
 
         Returns:
             List[Tuple[str, str]]: a list containing the filenames and corresponding hex shas.
         """
-        files = []
-        sms = {}
+
+        # if the tree is already traversed, return the cached result
+        files = self.tree_cache.get(root_tree.hexsha, [])
+        if files:
+            logger.info(f"tree {root_tree.hexsha} is already traversed")
+            return files
 
         repo = root_tree.repo
         logger.info(f"traversing tree {root_tree.hexsha} in repository {repo}")
 
-        # unchecked stores the tree objects that are not traversed yet
-        unchecked = [(root_tree, "")]
-        while len(unchecked) > 0:
-            tree, path = unchecked.pop()
-            for item in repo.git.cat_file("-p", tree.hexsha).split("\n"):
-                _obj, obj_type, sha_name = item.split(" ", 2)
-                sha, name = sha_name.split("\t", 1)
+        # # unchecked stores the tree objects that are not traversed yet
+        # unchecked = [(root_tree, "")]
+        # while len(unchecked) > 0:
+        #     tree, path = unchecked.pop()
+        for item in repo.git.cat_file("-p", root_tree.hexsha).split("\n"):
+            _, obj_type, sha_name = item.split(" ", 2)
+            sha, name = sha_name.split("\t", 1)
 
-                # if the object is a blob, add it to the list
-                if obj_type == "blob":
-                    files.append((sha, os.path.join(path, name)))
+            # if the object is a blob, add it to the list
+            if obj_type == "blob":
+                files.append((sha, os.path.join(root_path, name)))
 
-                    # only consider .gitmodules file in the root folder
-                    if (not sms) and (name == ".gitmodules"):
-                        gitmodules_content = repo.git.cat_file("-p", sha)
-                        sms = Repository.parse_gitmodules(gitmodules_content)
-                        logger.info(f"submodules detected: {sms}")
+                # only consider .gitmodules file in the root folder
+                if (not sms) and (name == ".gitmodules"):
+                    gitmodules_content = repo.git.cat_file("-p", sha)
+                    sms = Repository.parse_gitmodules(gitmodules_content)
+                    logger.info(f"submodules detected: {sms}")
 
-                # if the object is a tree, add it to the unchecked list
-                elif obj_type == "tree":
-                    unchecked.append((repo.tree(sha), os.path.join(path, name)))
+            # if the object is a tree, traverse it
+            elif obj_type == "tree":
+                tree_files = self.traverse(
+                    repo.tree(sha), os.path.join(root_path, name), base_folder, sms
+                )
+                files.extend(tree_files)
 
-                # if the object is a commit (i.e., submodule), traverse its root tree.
-                elif obj_type == "commit":
-                    sm_path = os.path.join(path, name)
-                    logger.info(f"entering submodule {sm_path}")
-                    if sm_path in sms:
-                        url = sms[sm_path]
+            # if the object is a commit (i.e., submodule), traverse its root tree.
+            elif obj_type == "commit":
+                sm_path = os.path.join(root_path, name)
+                logger.info(f"entering submodule {sm_path}")
+                if sm_path in sms:
+                    url = sms[sm_path]
 
-                        # if base_folder is not specified, try to get it from the environment variable
-                        if base_folder is None:
-                            base_folder = os.environ.get("DATA_HOME", None)
-                        # if base_folder is still None, raise an error
-                        if base_folder is None:
-                            raise FileNotFoundError("base_folder is not specified")
+                    # if base_folder is not specified, try to get it from the environment variable DATA_HOME
+                    if base_folder is None:
+                        base_folder = os.environ.get("DATA_HOME", None)
+                    # if the DATA_HOME environment variable is not set, raise an error
+                    if base_folder is None:
+                        raise FileNotFoundError("base_folder is not specified")
 
-                        # traverse the submodule
-                        repo_path = os.path.join(
-                            assemble_repo_folder(url, base_folder), "repo"
-                        )
-                        tmp_repo = Repository.safe_open(repo_path, url)
-                        sm_files = Repository.traverse(
-                            tmp_repo.commit(sha).tree, sm_path, base_folder
-                        )
-                        files.extend(sm_files)
+                    # traverse the submodule
+                    repo_path = os.path.join(
+                        assemble_repo_folder(url, base_folder), "repo"
+                    )
+                    tmp_repo = Repository.safe_open(repo_path, url)
+                    sm_files = self.traverse(
+                        tmp_repo.commit(sha).tree, sm_path, base_folder, {}
+                    )
+                    files.extend(sm_files)
 
-        return [(sha, os.path.join(root_path, path)) for sha, path in files]
+        # tmp = [(sha, os.path.join(root_path, path)) for sha, path in files]
+        self.tree_cache[root_tree.hexsha] = files
+        return files
 
     def snapshot(self, commit_sha: str) -> List[Tuple[str, str]]:
         """get the folder structure of a commit
@@ -215,15 +223,16 @@ class Repository:
             List[Tuple[str, str]]: a list containing the filenames and corresponding hex shas.
         """
         commit = self.repo.commit(commit_sha)
-        return Repository.traverse(
+        return self.traverse(
             root_tree=commit.tree,
             root_path="",
             base_folder=os.environ.get("DATA_HOME", None),
+            sms={},
         )
 
     @cached_property
     def blob_shas(self) -> List[str]:
-        """return a list of all blob shas, at the same time, save the bipartite graph of commits and blobs to a pickle file
+        """return a list of all blob shas, save the bipartite graph of commits and blobs to a pickle file
 
         Returns:
             List[str]: a list of all blob shas
@@ -232,17 +241,17 @@ class Repository:
         save_file_path = os.path.join(self.data_folder, "commit_blob_bipartie.pickle")
         if os.path.exists(save_file_path):
             logger.info(f"loading from commit_blob_bipartie.pickle")
-            B = pickle.load(open(save_file_path, "rb"))
-            return list({n for n, d in B.nodes(data=True) if d["type"] == "blob"})
+            bg = pickle.load(open(save_file_path, "rb"))
+            return list({n for n, d in bg.nodes(data=True) if d["type"] == "blob"})
 
         blobs = []
         edges = []
 
-        B = nx.Graph()
+        bg = nx.Graph()
 
         for commit in tqdm(self.commit_shas, ascii=" >="):
             ts = self.repo.commit(commit).authored_date
-            B.add_node(commit, type="commit", timestamp=ts)
+            bg.add_node(commit, type="commit", timestamp=ts)
 
             # different files may have the same blob sha
             tmp = {}
@@ -254,12 +263,12 @@ class Repository:
                 edges.append((commit, blob_sha, {"filename": blob_names}))
 
         blobs = list(set(blobs))
-        B.add_nodes_from(blobs, type="blob")
-        B.add_edges_from(edges)
+        bg.add_nodes_from(blobs, type="blob")
+        bg.add_edges_from(edges)
 
         with open(save_file_path, "wb") as outf:
             logger.info("dumping to commit_blob_bipartie.pickle")
-            pickle.dump(B, outf)
+            pickle.dump(bg, outf)
         return blobs
 
     def read_blob_content(self, blob_sha: str) -> str:
