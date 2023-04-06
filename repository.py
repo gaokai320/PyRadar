@@ -1,4 +1,5 @@
 import configparser
+import json
 import logging
 import os
 import shutil
@@ -9,8 +10,6 @@ from urllib.parse import urlparse
 import git
 from git import GitCommandError, GitDB, InvalidGitRepositoryError, Repo
 from tqdm import tqdm
-import networkx as nx
-import pickle
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -232,29 +231,24 @@ class Repository:
             sms={},
         )
 
-    @cached_property
-    def blob_shas(self) -> List[str]:
-        """return a list of all blob shas, save the bipartite graph of commits and blobs to a pickle file
-
-        Returns:
-            List[str]: a list of all blob shas
+    def traverse_all_commits(self):
+        """
+        traverse all commits and save the mapping and blob information to json files
         """
 
-        save_file_path = os.path.join(self.data_folder, "commit_blob_bipartie.pickle")
-        if os.path.exists(save_file_path):
-            logger.info(f"loading from commit_blob_bipartie.pickle")
-            bg = pickle.load(open(save_file_path, "rb"))
-            return list({n for n, d in bg.nodes(data=True) if d["type"] == "blob"})
+        graph_path = os.path.join(self.data_folder, "b2fc.json")
+        nodes_path = os.path.join(self.data_folder, "idx2sha.json")
+        if os.path.exists(graph_path):
+            return
 
         blobs = []
+        commits = []
         edges = []
-
-        bg = nx.Graph()
 
         for commit in tqdm(self.commit_shas, ascii=" >="):
             logger.info(f"start listing commit {commit}")
             ts = self.repo.commit(commit).authored_date
-            bg.add_node(commit, type="commit", timestamp=ts)
+            commits.append((commit, ts))
 
             # different files may have the same blob sha
             tmp = {}
@@ -263,17 +257,49 @@ class Repository:
                 tmp[blob_sha] = tmp.get(blob_sha, [])
                 tmp[blob_sha].append(blob_name)
             for blob_sha, blob_names in tmp.items():
-                edges.append((commit, blob_sha, {"filename": blob_names}))
+                edges.append((commit, blob_sha, blob_names))
             logger.info(f"finish listing commit {commit}")
 
+        # for space efficiency, we map the blob shas and commit shas to index
+        # and replace the original shas with the indices in the graph
+        logger.info(f"start dumping nodes to idx2sha.json")
         blobs = list(set(blobs))
-        bg.add_nodes_from(blobs, type="blob")
-        bg.add_edges_from(edges)
+        nodes = {}
+        nodes["blob"] = {sha: i for i, sha in enumerate(blobs)}
+        num_blobs = len(blobs)
+        nodes["commit"] = {
+            sha: (num_blobs + i, ts) for i, (sha, ts) in enumerate(commits)
+        }
+        with open(nodes_path, "w") as outf:
+            json.dump(nodes, outf, indent=4)
+        logger.info(f"finish dumping nodes to idx2sha.json")
 
-        with open(save_file_path, "wb") as outf:
-            logger.info("dumping to commit_blob_bipartie.pickle")
-            pickle.dump(bg, outf)
-        return blobs
+        logger.info("start dumping to b2fc.json")
+        # {blob_sha: {filename: [commmit_shas], ....}}
+        minified_edges = {
+            i: {} for i in range(num_blobs)
+        }  # type: Dict[int, Dict[str, List[int]]]
+        for c, b, fs in edges:
+            bid = nodes["blob"][b]
+            cid = nodes["commit"][c][0]
+            for f in fs:
+                minified_edges[bid][f] = minified_edges[bid].get(f, [])
+                minified_edges[bid][f].append(cid)
+        with open(graph_path, "w") as outf:
+            json.dump(minified_edges, outf)
+        logger.info("finish dumping to b2fc.json")
+
+    @cached_property
+    def blob_shas(self) -> List[str]:
+        """return a list of all blob shas"""
+
+        nodes_path = os.path.join(self.data_folder, "idx2sha.json")
+        if not os.path.exists(nodes_path):
+            logger.info(f"idx2sha.json not exists, start traversing all commits")
+            self.traverse_all_commits()
+        logger.info(f"loading from idx2sha.json")
+        nodes = json.load(open(nodes_path))
+        return list(nodes["blob"].keys())
 
     def read_blob_content(self, blob_sha: str) -> str:
         """read the content of a blob object
