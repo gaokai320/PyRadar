@@ -49,7 +49,7 @@ def url_parser(data):
 
 
 def get_package_repo_urls():
-    pypi_db = MongoClient("127.0.0.1", 27017)["pypi"]
+    pypi_db = MongoClient("127.0.0.1", 27017)["radar"]
     release_metadata = pypi_db["release_metadata"]
 
     df = pd.DataFrame(
@@ -146,7 +146,7 @@ def parse_requirement(requirement_str: str):
 
 
 def parse_release_metadata():
-    pypi_db = MongoClient("127.0.0.1", 27017)["pypi"]
+    pypi_db = MongoClient("127.0.0.1", 27017)["radar"]
     release_metadata = pypi_db["release_metadata"]
 
     deps = []

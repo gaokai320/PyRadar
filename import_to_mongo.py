@@ -7,7 +7,7 @@ from pymongo import MongoClient
 from pymongo.write_concern import WriteConcern
 from tqdm import tqdm
 
-db = MongoClient("127.0.0.1", 27017)["pypi"]
+db = MongoClient("127.0.0.1", 27017)["radar"]
 col = db["release_metadata"]
 
 metadata_folder = os.path.join(sys.argv[1], "metadata")
