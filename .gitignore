@@ -132,4 +132,4 @@ log/
 data/
 figures/
 .idea/
-tests/
+# tests/
