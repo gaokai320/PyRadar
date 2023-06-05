@@ -7,7 +7,6 @@ import time
 import xml.etree.ElementTree as ET
 import xmlrpc.client
 from datetime import datetime, timezone
-from typing import List, Tuple
 
 from bs4 import BeautifulSoup
 import requests
@@ -99,7 +98,7 @@ class PyPI:
         dump: bool = False,
         timeout: int = 60,
         email: str = None,
-    ) -> List[str]:
+    ) -> list[str]:
         """Return names of all packages registered on PyPI. Load form existing file or update the data.
 
         Args:
@@ -120,8 +119,8 @@ class PyPI:
             return self.list_with_simple(update, dump, timeout, email)
         return []
 
-    def list_with_xmlrpc(self, update: bool = True, dump: bool = False) -> List[str]:
-        """List packages names with XML-RPC API.
+    def list_with_xmlrpc(self, update: bool = True, dump: bool = False) -> list[str]:
+        """list packages names with XML-RPC API.
 
         Args:
             update (bool): If False, load package names from `self.name_file` (if exists). Else, query XML-RPC API and update data. Defaults to True.
@@ -154,8 +153,8 @@ class PyPI:
         dump: bool = False,
         timeout: int = 60,
         email: str = None,
-    ) -> List[str]:
-        """List package names with Simple API.
+    ) -> list[str]:
+        """list package names with Simple API.
 
         Args:
             update (bool): If False, load package names from `self.name_file` (if exists). Else, query Simple API and update data. Defaults to True.
@@ -196,14 +195,14 @@ class PyPI:
             return []
 
     @staticmethod
-    def new_releases_since(timestamp: int) -> List[Tuple[str, str, int]]:
+    def new_releases_since(timestamp: int) -> list[tuple[str, str, int]]:
         """Given a timestamp, return all new releases since then.
 
         Args:
             timestamp (int): the timestamp used to query updates.
 
         Returns:
-            List[(str, str, int)]: A tuple list. For each tuple, the first element is the package name, the second element is the package version, and the third element is the release's upload timestamp.
+            list[(str, str, int)]: A tuple list. For each tuple, the first element is the package name, the second element is the package version, and the third element is the release's upload timestamp.
         """
         res = []
         client = xmlrpc.client.ServerProxy(PyPI.JSON_API_BASE)
@@ -258,11 +257,11 @@ class PyPI:
     @staticmethod
     def new_releases_by_rss(
         email: str = None, timeout: int = 60
-    ) -> List[Tuple[str, str, int]]:
+    ) -> list[tuple[str, str, int]]:
         """Query new releases with FEED API. This API only returns the latest 100 new releases.
 
         Returns:
-            List[Tuple[str, str, int]]: a tuple list, the elements in a tuple corresponds to package name, package version, upload timestamp, respectively.
+            list[tuple[str, str, int]]: a tuple list, the elements in a tuple corresponds to package name, package version, upload timestamp, respectively.
 
         Args:
             email (str): the email in `requests.get` headers. Defaults to None.
@@ -338,7 +337,7 @@ class Package:
         """Query the metadata of the given version
 
         Returns:
-            Tuple[dict, bool]: the queryed metadata and whether hit cache.
+            tuple[dict, bool]: the queryed metadata and whether hit cache.
 
         Args:
             version (str): the version to query metadata.
@@ -375,7 +374,7 @@ class Package:
         return None, False
 
     @staticmethod
-    def get_maintainers(name: str, timeout=10) -> List[str]:
+    def get_maintainers(name: str, timeout=10) -> list[str]:
         maintainers = []
         url = f"https://pypi.org/project/{name}/"
         try:

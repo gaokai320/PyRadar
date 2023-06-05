@@ -4,7 +4,7 @@ import logging
 import os
 import shutil
 from functools import cached_property
-from typing import Dict, List, Optional, Tuple
+from typing import Optional
 from urllib.parse import urlparse
 
 import git
@@ -82,7 +82,7 @@ class Repository:
         return repo
 
     @cached_property
-    def object_shas(self) -> Dict[str, List[str]]:
+    def object_shas(self) -> dict[str, list[str]]:
         """use the command `git cat-file --batch-check --batch-all-objects --unordered` to list all git objects"""
         logger.info("start listing all git objects")
         object_shas = {"commit": [], "tree": [], "blob": [], "tag": []}
@@ -102,17 +102,17 @@ class Repository:
         return object_shas
 
     @cached_property
-    def tree_shas(self) -> List[str]:
+    def tree_shas(self) -> list[str]:
         """a list of all tree object shas"""
         return self.object_shas["tree"]
 
     @cached_property
-    def commit_shas(self) -> List[str]:
+    def commit_shas(self) -> list[str]:
         """a list of all commit object shas"""
         return self.object_shas["commit"]
 
     @cached_property
-    def tag_shas(self) -> Dict[str, str]:
+    def tag_shas(self) -> dict[str, str]:
         """a dict of tag object names (e.g., v0.1.0) with the commit shas they point to"""
         res = {}
         for tag in self.repo.tags:
@@ -120,7 +120,7 @@ class Repository:
         return res
 
     @staticmethod
-    def parse_gitmodules(content: str) -> Dict[str, str]:
+    def parse_gitmodules(content: str) -> dict[str, str]:
         """parse the .gitmodules file and return a dict of submodule paths and corresponding urls
 
         Args:
@@ -137,7 +137,7 @@ class Repository:
 
     def traverse(
         self, root_tree: git.Tree, root_path="", base_folder: str = None, sms: dict = {}
-    ) -> List[Tuple[str, str]]:
+    ) -> list[tuple[str, str]]:
         """traverse the tree object and return a list of (filename, sha) pairs
 
         Args:
@@ -147,7 +147,7 @@ class Repository:
             sms (str): a dict of submodules with submodule path and url.
 
         Returns:
-            List[Tuple[str, str]]: a list containing the filenames and corresponding hex shas.
+            list[tuple[str, str]]: a list containing the filenames and corresponding hex shas.
         """
 
         # if the tree is already traversed, return the cached result
@@ -214,14 +214,14 @@ class Repository:
         self.tree_cache[root_tree.hexsha] = files
         return files
 
-    def snapshot(self, commit_sha: str) -> List[Tuple[str, str]]:
+    def snapshot(self, commit_sha: str) -> list[tuple[str, str]]:
         """get the folder structure of a commit
 
         Args:
             commit_sha (str): the commit sha
 
         Returns:
-            List[Tuple[str, str]]: a list containing the filenames and corresponding hex shas.
+            list[tuple[str, str]]: a list containing the filenames and corresponding hex shas.
         """
         commit = self.repo.commit(commit_sha)
         return self.traverse(
@@ -278,7 +278,7 @@ class Repository:
         # {blob_sha: {filename: [commmit_shas], ....}}
         minified_edges = {
             i: {} for i in range(num_blobs)
-        }  # type: Dict[int, Dict[str, List[int]]]
+        }  # type: dict[int, dict[str, list[int]]]
         for c, b, fs in edges:
             bid = nodes["blob"][b]
             cid = nodes["commit"][c][0]
@@ -290,7 +290,7 @@ class Repository:
         logger.info("finish dumping to b2fc.json")
 
     @cached_property
-    def blob_shas(self) -> List[str]:
+    def blob_shas(self) -> list[str]:
         """return a list of all blob shas"""
 
         nodes_path = os.path.join(self.data_folder, "idx2sha.json")
