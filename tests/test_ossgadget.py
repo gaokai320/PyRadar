@@ -26,9 +26,9 @@ class TestOSSGadget:
             ["https://github.com/gatom22/postbot"]
         )
 
-    def test_search_source(self):
-        assert OSSGadget("postbot", "0.1.0").search_source() == None
+    def test_repository_url(self):
+        assert OSSGadget("postbot", "0.1.0").repository_url == None
         assert (
-            OSSGadget("postbot", "0.1.3").search_source()
+            OSSGadget("postbot", "0.1.3").repository_url
             == "https://github.com/gatom22/postbot"
         )

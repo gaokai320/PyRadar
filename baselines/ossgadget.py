@@ -1,9 +1,10 @@
-from functools import cached_property
 import re
+from functools import cached_property, property
 from typing import Optional, Union
 
-from baselines.utils import get_latest_version
 from pymongo import MongoClient
+
+from baselines.utils import get_latest_version
 
 release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
 
@@ -21,7 +22,7 @@ class OSSGadget:
         self.package_name = package_name
         self.version = version
 
-    @cached_property
+    @property
     def metadata(self) -> Optional[dict[str, str]]:
         """Retrieve metadata fields used by OSSGadget."""
 
@@ -38,7 +39,8 @@ class OSSGadget:
         )
         return metadata
 
-    def search_source(self) -> Optional[str]:
+    @cached_property
+    def repository_url(self) -> Optional[str]:
         """Search the source code repository of the package.
 
         Returns:
