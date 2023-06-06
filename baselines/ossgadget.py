@@ -1,3 +1,4 @@
+from functools import cached_property
 import re
 from typing import Optional, Union
 
@@ -20,7 +21,8 @@ class OSSGadget:
         self.package_name = package_name
         self.version = version
 
-    def get_metadata(self) -> Optional[dict[str, str]]:
+    @cached_property
+    def metadata(self) -> Optional[dict[str, str]]:
         """Retrieve metadata fields used by OSSGadget."""
 
         # if version is not specified, use the latest non development version
@@ -42,7 +44,7 @@ class OSSGadget:
         Returns:
             Optional[str]: The URL of the source code repository.
         """
-        metadata = self.get_metadata()
+        metadata = self.metadata
         if metadata:
             repo_urls = OSSGadget.parse_metadata(metadata)
             if repo_urls:
