@@ -1,12 +1,5 @@
 import re
-from functools import cached_property
 from typing import Optional, Union
-
-from pymongo import MongoClient
-
-from baselines.utils import get_latest_version
-
-release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
 
 # Reference to: https://github.com/microsoft/OSSGadget/blob/main/src/Shared/PackageManagers/BaseProjectManager.cs#L68
 pattern = re.compile(r"github\.com/([a-z0-9\-_\.]+)/([a-z0-9\-_\.]+)", flags=re.I)
@@ -17,37 +10,6 @@ class OSSGadget:
 
     OSSGadget locates a package/release's source code repository on GitHub from the package/release's PyPI metadata, see [`IdentifySourceRepositoryAsync`](https://github.com/microsoft/OSSGadget/blob/main/src/Shared/PackageManagers/BaseProjectManager.cs). Here, we use pre-collected PyPI release metadata dump instead.
     """
-
-    def __init__(self, package_name: str, version: str = None) -> None:
-        self.package_name = package_name
-        self.version = version
-
-    @property
-    def metadata(self) -> Optional[dict[str, str]]:
-        """Retrieve metadata fields used by OSSGadget."""
-
-        # if version is not specified, use the latest non development version
-        if not self.version:
-            self.version = get_latest_version(self.package_name)
-
-        query = {"name": self.package_name, "version": self.version}
-        metadata = release_metadata.find_one(
-            filter=query,
-            projection={
-                "_id": 0,
-            },
-        )
-        return metadata
-
-    @cached_property
-    def repository_url(self) -> Optional[str]:
-        """Search the source code repository of the package.
-
-        Returns:
-            Optional[str]: The URL of the source code repository.
-        """
-        metadata = self.metadata
-        return OSSGadget.parse_metadata(metadata)
 
     @staticmethod
     def parse_metadata(
