@@ -1,5 +1,5 @@
 import re
-from functools import cached_property, property
+from functools import cached_property
 from typing import Optional, Union
 
 from pymongo import MongoClient
@@ -47,15 +47,12 @@ class OSSGadget:
             Optional[str]: The URL of the source code repository.
         """
         metadata = self.metadata
-        if metadata:
-            repo_urls = OSSGadget.parse_metadata(metadata)
-            if repo_urls:
-                return repo_urls[0]
-        else:
-            return None
+        return OSSGadget.parse_metadata(metadata)
 
     @staticmethod
-    def parse_metadata(metadata: dict[str, Union[str, dict[str, str]]]) -> list[str]:
+    def parse_metadata(
+        metadata: dict[str, Union[str, dict[str, str]]]
+    ) -> Optional[str]:
         """Parse the metadata fields used by OSSGadget.
 
         OSSGadget only searches the `home_page`, `download_url` and `project_urls` field, see [`SearchRepoUrlsInPackageMetadata`](https://github.com/microsoft/OSSGadget/blob/main/src/Shared/PackageManagers/PyPIProjectManager.cs).
@@ -68,21 +65,23 @@ class OSSGadget:
         """
         repository_urls = []
         if metadata is None:
-            return repository_urls
+            return None
         for key, value in metadata.items():
             if key.lower() in ["home_page", "download_url"] and value:
-                urls = OSSGadget.extractGitHubURL(value)
+                urls = OSSGadget.extract_repository_url(value)
                 if urls:
                     repository_urls.append(urls[0])
             elif key.lower() == "project_urls" and value:
                 for url in value.values():
-                    urls = OSSGadget.extractGitHubURL(url)
+                    urls = OSSGadget.extract_repository_url(url)
                     if urls:
                         repository_urls.append(urls[0])
-        return list(set(repository_urls))
+        if repository_urls:
+            return repository_urls[0]
+        return None
 
     @staticmethod
-    def extractGitHubURL(url: str) -> list[str]:
+    def extract_repository_url(url: str) -> list[str]:
         """Extract GitHub URL from a URL.
 
         OSSGadget use regex to extract GitHub URL, see [`ExtractGitHubPackageURLs`](https://github.com/microsoft/OSSGadget/blob/main/src/Shared/PackageManagers/BaseProjectManager.cs)
