@@ -1,5 +1,6 @@
 from typing import Optional
 
+from packaging.utils import canonicalize_name
 from pymongo import MongoClient
 
 from baselines.utils import get_latest_version
@@ -9,7 +10,7 @@ release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
 
 class Release:
     def __init__(self, package_name: str, version: Optional[str] = None) -> None:
-        self.package_name = package_name
+        self.package_name = canonicalize_name(package_name)
         self.version = version
 
     @property
