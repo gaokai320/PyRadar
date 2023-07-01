@@ -1,9 +1,9 @@
 from collections import OrderedDict
 
+import pytest
+
 from baselines.release import Release
 from baselines.warehouse import Warehouse
-
-import pytest
 
 
 class TestWarehouse:
@@ -156,7 +156,6 @@ class TestWarehouse:
         }
 
         assert dict(Warehouse.urls(metadata)) == dict(expected)
-
 
     def test_extract_repository_url(self):
         assert Warehouse.extract_repository_url(["https://tensorflow.org"]) == None
