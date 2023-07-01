@@ -8,8 +8,8 @@ import xml.etree.ElementTree as ET
 import xmlrpc.client
 from datetime import datetime, timezone
 
-from bs4 import BeautifulSoup
 import requests
+from bs4 import BeautifulSoup
 from joblib import Parallel, delayed
 from tqdm import tqdm
 
@@ -391,8 +391,12 @@ class Package:
                 title = sidebar.find("h3", {"class": "sidebar-section__title"})
                 if title.text != "Maintainers":
                     continue
-                for span in sidebar.find_all("span", {"class": "sidebar-section__maintainer"}):
-                    t = span.find("span", {"class": "sidebar-section__user-gravatar-text"}).text
+                for span in sidebar.find_all(
+                    "span", {"class": "sidebar-section__maintainer"}
+                ):
+                    t = span.find(
+                        "span", {"class": "sidebar-section__user-gravatar-text"}
+                    ).text
                     maintainers.append(t.strip(" \n"))
         except:
             logger.error(f"{name}")
@@ -462,10 +466,10 @@ if __name__ == "__main__":
         "--email", type=str, default=None, help="your email for request header"
     )
     parser.add_argument(
-        "--process", type=int, default=1, help="your email for request header"
+        "--process", type=int, default=1, help="number of processes to use"
     )
     parser.add_argument(
-        "--chunk", type=int, default=1, help="your email for request header"
+        "--chunk", type=int, default=1, help="number of packages to process in a chunk"
     )
     args = parser.parse_args()
     data_folder = args.folder

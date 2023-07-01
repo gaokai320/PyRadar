@@ -3,6 +3,7 @@ import os
 import sys
 
 import pymongo
+from packaging.utils import canonicalize_name
 from pymongo import MongoClient
 from pymongo.write_concern import WriteConcern
 from tqdm import tqdm
@@ -55,6 +56,7 @@ for pkg in tqdm(packages):
                 data[key] = info_data.get(key, None)
             if len(metadata["urls"]) > 0:
                 data["upload_time"] = metadata["urls"][0]["upload_time"]
+            data["name"] = canonicalize_name(data["name"])
             batch.append(data)
         except Exception as e:
             print(f"{pkg} {version}: error! {e}")
@@ -67,3 +69,6 @@ for pkg in tqdm(packages):
                 pass
 if len(batch) > 0:
     col.with_options(write_concern=WriteConcern(w=0)).insert_many(batch, ordered=False)
+
+col.create_index([("name", pymongo.ASCENDING)])
+col.create_index([("name", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])

@@ -2,18 +2,20 @@
 
 ## Environment Setup
 ```shell
-# Ubuntu 20.04.3 LTS (GNU/Linux 5.4.0-113-generic x86_64)
-conda create -n radar python=3.8.11
-conda activate radar
-pip install ipykernel
+# Ubuntu 22.04 LTS (GNU/Linux 5.19.0-41-generic x86_64)
+# install pyenv from https://github.com/pyenv/pyenv#installation
+pyenv install 3.11.3
+pyenv virtualenv 3.11.3 radar
+pyenv activate radar
 pip install -r requirements.txt
+# e.g., /data/pypi_data
 export DATA_HOME=<Folder to Store Data>
 ```
 
 ## Run Scripts
 1. Dump PyPI package metadata
 ```shell
-python -u pypi_crawler.py --folder=$DATA_HOME --email=gaokai19@pku.edu.cn
+python -u pypi_crawler.py --folder=$DATA_HOME --email=<Your Email>
 ```
 
 2. Import metadata to MongoDB
