@@ -20,7 +20,7 @@ class TestOSSGadget:
             OSSGadget.parse_metadata(metadata2) == "https://github.com/gatom22/postbot"
         )
 
-    # adopted from [src/oss-tests/FindSourceTests.cs](https://github.com/microsoft/OSSGadget/blob/main/src/oss-tests/FindSourceTests.cs#L95)
+    # adapted from [src/oss-tests/FindSourceTests.cs](https://github.com/microsoft/OSSGadget/blob/main/src/oss-tests/FindSourceTests.cs#L95)
     @pytest.mark.parametrize(
         "name,repo_url",
         [

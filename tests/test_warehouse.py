@@ -18,7 +18,7 @@ class TestWarehouse:
             == OrderedDict()
         )
 
-    # adopted from [`tests/unit/packaging/test_models.py`]https://github.com/pypi/warehouse/blob/main/tests/unit/packaging/test_models.py#L249
+    # adapted from [`tests/unit/packaging/test_models.py`]https://github.com/pypi/warehouse/blob/main/tests/unit/packaging/test_models.py#L249
     @pytest.mark.parametrize(
         ("home_page", "download_url", "project_urls", "expected"),
         [

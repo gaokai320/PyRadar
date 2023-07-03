@@ -2,7 +2,7 @@ import pytest
 
 from baselines.url_parser import *
 
-# code adopted from files in https://github.com/librariesio/librariesio-url-parser/tree/main/spec
+# code adapted from files in https://github.com/librariesio/librariesio-url-parser/tree/main/spec
 
 
 class TestAndroidGooglesourceUrlParser:
