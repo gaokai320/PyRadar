@@ -60,7 +60,7 @@ for pkg in tqdm(packages):
             batch.append(data)
         except Exception as e:
             print(f"{pkg} {version}: error! {e}")
-        if len(batch) % 1000 == 0:
+        if len(batch) % 40000 == 0:
             try:
                 col.with_options(write_concern=WriteConcern(w=0)).insert_many(
                     batch, ordered=False
