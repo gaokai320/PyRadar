@@ -57,16 +57,9 @@ class URLParser:
 
     def parse_instance(self) -> Optional[str]:
         """reimplementation of instance method [`parse`](https://github.com/librariesio/librariesio-url-parser/blob/main/lib/url_parser.rb#L14)"""
-        print(f"url: {self.url}")
-        print(f"domain: {self.domain}")
-        print(f"tlds: {self.tlds}")
-        print(f"full_domain: {self.full_domain}")
-        print(f"domain_regex: {self.domain_regex}")
-        print(f"parse_instance:")
         if not self.parseable():
             return None
         extracted_url = self.extractable_early()
-        print(f"\textracted_url: {extracted_url}")
 
         if extracted_url:
             return extracted_url
@@ -112,34 +105,21 @@ class URLParser:
     def clean_url(self) -> None:
         """reimplementation of instance method [`clean_url`](https://github.com/librariesio/librariesio-url-parser/blob/main/lib/url_parser.rb#L42)"""
         self.remove_whitespace()
-        print("\tremove_whitespace: {}".format(self.url))
         self.remove_brackets()
-        print("\tremove_brackets: {}".format(self.url))
         self.remove_anchors()
-        print("\tremove_anchors: {}".format(self.url))
         self.remove_querystring()
-        print("\tremove_querystring: {}".format(self.url))
         self.remove_auth_user()
-        print("\tremove_auth_user: {}".format(self.url))
         self.remove_equals_sign()
-        print("\tremove_equals_sign: {}".format(self.url))
         self.remove_scheme()
-        print("\tremove_scheme: {}".format(self.url))
 
         if not self.includes_domain():
             self.url = None
             return None
-        print("\tincludes_domain: {}".format(self.url))
         self.remove_subdomain()
-        print("\tremove_subdomain: {}".format(self.url))
         self.remove_domain()
-        print("\tremove_domain: {}".format(self.url))
         self.remove_git_scheme()
-        print("\tremove_git_scheme: {}".format(self.url))
         self.remove_extra_segments()
-        print("\tremove_extra_segments: {}".format(self.url))
         self.remove_git_extension()
-        print("\tremove_git_extension: {}".format(self.url))
 
     def remove_whitespace(self) -> None:
         self.url = re.sub(r"\s", "", self.url)

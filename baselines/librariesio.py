@@ -18,18 +18,24 @@ class LibrariesIO:
     def select_repository_url(metadata: dict[str, str]) -> Optional[str]:
         """reimplementation of [`select_repository_url`](https://github.com/librariesio/libraries.io/blob/main/app/models/package_manager/pypi.rb#L84)"""
         fields = ["Source", "Source Code", "Repository", "Code"]
-        project_urls = metadata.get("project_urls", {})
-        return next(
-            (project_urls.get(field) for field in fields if project_urls.get(field)),
-            None,
-        )
+        project_urls = metadata.get("project_urls")
+        if project_urls:
+            return next(
+                (
+                    project_urls.get(field)
+                    for field in fields
+                    if project_urls.get(field)
+                ),
+                None,
+            )
 
     @staticmethod
     def select_homepge_url(metadata: dict[str, str]) -> Optional[str]:
         """reimplementation of [`select_homepage_url`](https://github.com/librariesio/libraries.io/blob/main/app/models/package_manager/pypi.rb#L90)"""
-        return metadata.get("home_page") or metadata.get("project_urls", {}).get(
-            "Homepage"
-        )
+        if metadata.get("home_page"):
+            return metadata.get("home_page")
+        if metadata.get("project_urls"):
+            return metadata.get("project_urls").get("Homepage")
 
     @staticmethod
     def repo_fallback(repo, homepage) -> Optional[str]:
