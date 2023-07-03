@@ -1,5 +1,5 @@
 import re
-from typing import Optional, Union
+from typing import Optional
 
 # Reference to: https://github.com/microsoft/OSSGadget/blob/main/src/Shared/PackageManagers/BaseProjectManager.cs#L68
 pattern = re.compile(r"github\.com/([a-z0-9\-_\.]+)/([a-z0-9\-_\.]+)", flags=re.I)
@@ -13,7 +13,7 @@ class OSSGadget:
 
     @staticmethod
     def parse_metadata(
-        metadata: dict[str, Union[str, dict[str, str]]]
+        metadata: dict[str, Optional[str | dict[str, str]]]
     ) -> Optional[str]:
         """Parse the metadata fields used by OSSGadget.
 

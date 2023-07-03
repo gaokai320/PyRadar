@@ -9,7 +9,7 @@ class Warehouse:
     """[Warehouse](https://warehouse.pypa.io/index.html) is a web application that implements the canonical Python package index (repository); its production deployment is PyPI."""
 
     @staticmethod
-    def parse_metadata(metadata: dict[str, str]) -> Optional[str]:
+    def parse_metadata(metadata: Optional[str | dict[str, str]]) -> Optional[str]:
         if metadata:
             urls = Warehouse.urls(metadata)
             repository_url = Warehouse.extract_repository_url(urls.values())
@@ -18,7 +18,7 @@ class Warehouse:
         return None
 
     @staticmethod
-    def urls(metadata: Optional[dict[str, str]]) -> OrderedDict[str, str]:
+    def urls(metadata: Optional[str | dict[str, str]]) -> OrderedDict[str, str]:
         """Get all urls in the `home_page`, `download_url`, and `project_urls` field of distribution metadata. Code modified from: https://github.com/pypi/warehouse/blob/main/warehouse/packaging/models.py#L555
 
         Returns:

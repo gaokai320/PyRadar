@@ -4,7 +4,7 @@ from baselines.url_parser import URLParser
 
 class LibrariesIO:
     @staticmethod
-    def parse_metadata(metadata: dict[str, str]) -> Optional[str]:
+    def parse_metadata(metadata: Optional[str | dict[str, str]]) -> Optional[str]:
         if not metadata:
             return None
 
@@ -15,7 +15,9 @@ class LibrariesIO:
         )
 
     @staticmethod
-    def select_repository_url(metadata: dict[str, str]) -> Optional[str]:
+    def select_repository_url(
+        metadata: Optional[str | dict[str, str]]
+    ) -> Optional[str]:
         """reimplementation of [`select_repository_url`](https://github.com/librariesio/libraries.io/blob/main/app/models/package_manager/pypi.rb#L84)"""
         fields = ["Source", "Source Code", "Repository", "Code"]
         project_urls = metadata.get("project_urls")
@@ -30,7 +32,7 @@ class LibrariesIO:
             )
 
     @staticmethod
-    def select_homepge_url(metadata: dict[str, str]) -> Optional[str]:
+    def select_homepge_url(metadata: Optional[str | dict[str, str]]) -> Optional[str]:
         """reimplementation of [`select_homepage_url`](https://github.com/librariesio/libraries.io/blob/main/app/models/package_manager/pypi.rb#L90)"""
         if metadata.get("home_page"):
             return metadata.get("home_page")
