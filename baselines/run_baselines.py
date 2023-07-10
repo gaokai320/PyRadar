@@ -3,9 +3,9 @@ import argparse
 from pymongo import MongoClient
 from tqdm import tqdm
 
+from baselines.librariesio import LibrariesIO
 from baselines.ossgadget import OSSGadget
 from baselines.warehouse import Warehouse
-from baselines.librariesio import LibrariesIO
 
 release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
 
