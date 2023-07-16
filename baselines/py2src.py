@@ -1,18 +1,31 @@
+# import csv
+import logging
 import os
 from collections import Counter
 from email.message import EmailMessage
 from functools import cache
-from typing import Optional
+from typing import Generator, Optional, TypeVar
 from urllib.parse import urlparse
 
 import readme_renderer.markdown
 import readme_renderer.rst
 import readme_renderer.txt
 import requests
+import urllib3
+import validators
 from bs4 import BeautifulSoup
+from pymongo import MongoClient
+from pyparsing import Iterable
+from tqdm import tqdm
+from urllib3.util import Retry
 
 from baselines.ossgadget import OSSGadget
+from baselines.utils import configure_logger
 from baselines.warehouse import Warehouse
+
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+# logger = configure_logger("py2src", "log/py2src.log", logging.DEBUG)
+release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
 
 _RENDERERS = {
     None: readme_renderer.rst,  # Default if description_content_type is None
@@ -59,59 +72,50 @@ def render(value, content_type=None, use_fallback=True):
 class Py2Src:
     @staticmethod
     def parse_metadata(
-        metadata: dict[str, Optional[str | dict[str, str]]]
-    ) -> Optional[str]:
+        metadata: dict[str, Optional[str | dict[str, str]]], session=None, logger=None
+    ) -> list[str]:
         """Code adapted from `get_final_url` method in [GetFinalURL](https://github.com/simonepirocca/py2src/blob/master/src/get_github_url.py#L10) class."""
-        ossgadget_url = URLFinder.find_ossgadget_url(metadata)
-        badge_url = URLFinder.find_github_url_from_pypi_badge(metadata)
-        homepage_url = URLFinder.mode_2(metadata)
-        metadata_url = URLFinder.mode_1(metadata)
-        readthedocs_url = URLFinder.find_github_url_from_readthedocs(metadata)
+        ossgadget_url = URLFinder.find_ossgadget_url(metadata, session, logger)
+        badge_url = URLFinder.find_github_url_from_pypi_badge(metadata, session, logger)
+        homepage_url = URLFinder.mode_2(metadata, session, logger)
+        metadata_url = URLFinder.mode_1(metadata, session, logger)
+        readthedocs_url = URLFinder.find_github_url_from_readthedocs(
+            metadata, session, logger
+        )
         statistics_url = URLFinder.find_github_url_from_pypi_statistics(metadata)
 
-        proposed_urls = [
+        return [
+            ossgadget_url,
             badge_url,
             homepage_url,
             metadata_url,
             readthedocs_url,
             statistics_url,
         ]
-        proposed_urls = [_ for _ in proposed_urls if _]
-        mode_url = (
-            Counter(proposed_urls).most_common(1)[0][0] if proposed_urls else None
-        )
-
-        if mode_url:
-            return mode_url
-        return ossgadget_url
 
 
 @cache
-def safe_get(url: str) -> Optional[requests.Response]:
+def safe_get(url: str, session=None, logger=None) -> Optional[requests.Response]:
     """A robust wrapper of `requests.get` to handle exceptions. Code adapted from https://stackoverflow.com/a/47007419"""
+    response = None
     try:
-        response = requests.get(
-            url, headers={"User-Agent": "Mozilla/5.0"}, verify=False
-        )
+        response = session.get(url)
         response.raise_for_status()
-        return response
     except requests.exceptions.HTTPError as errh:
-        print("Http Error:", errh)
-        return None
+        logger.error(f"Http Error: {errh}")
     except requests.exceptions.ConnectionError as errc:
-        print("Error Connecting:", errc)
-        return None
+        logger.error(f"Error Connecting: {errc}")
     except requests.exceptions.Timeout as errt:
-        print("Timeout Error:", errt)
-        return None
-    except requests.exceptions.RequestException as err:
-        print("OOps: Something Else", err)
-        return None
+        logger.error(f"Timeout Error: {errt}")
+    except Exception as err:
+        logger.error(f"OOps, Something Else: {err}")
+    finally:
+        return response
 
 
 class URLFinder:
     @staticmethod
-    def real_github_url(url: str) -> Optional[str]:
+    def real_github_url(url: str, session=None, logger=None) -> Optional[str]:
         """combination of `test_url_working`, `normalize_url`, and `real_github_url` methods in [src/url_finder.py](https://github.com/simonepirocca/py2src/blob/master/src/url_finder.py) to avoid redundant requests."""
 
         # adapted from [`normalize_url`](https://github.com/simonepirocca/py2src/blob/master/src/url_finder.py#L533).
@@ -120,7 +124,7 @@ class URLFinder:
         url = "https://github.com" + urlparse(url).path.replace(".git", "").lower()
 
         # `test_url_working` overlaps with `real_github_url`, so I combine them.
-        response = safe_get(url)
+        response = safe_get(url, session, logger)
         if (
             response
             and response.status_code == 200
@@ -131,12 +135,12 @@ class URLFinder:
 
     @staticmethod
     def find_ossgadget_url(
-        metadata: dict[str, Optional[str | dict[str, str]]]
+        metadata: dict[str, Optional[str | dict[str, str]]], session=None, logger=None
     ) -> Optional[str]:
         """reimplementation of `find_ossgadget_url` method in [src/url_finder.py](https://github.com/simonepirocca/py2src/blob/master/src/url_finder.py#L347). Note that we have reimplemented OSSGadget `oss-find-source`, so we just call the reimplementation."""
         url = OSSGadget.parse_metadata(metadata)
         if url:
-            return URLFinder.real_github_url(url)
+            return URLFinder.real_github_url(url, session, logger)
         return None
 
     @staticmethod
@@ -155,7 +159,7 @@ class URLFinder:
 
     @staticmethod
     def find_github_url_from_pypi_badge(
-        metadata: dict[str, Optional[str | dict[str, str]]]
+        metadata: dict[str, Optional[str | dict[str, str]]], session=None, logger=None
     ) -> Optional[str]:
         """Code adapted from `find_github_url_from_pypi_badge` in [src/url_finder.py](https://github.com/simonepirocca/py2src/blob/master/src/url_finder.py#L462). Check if PyPI page have a GitHub badge linked to a GitHub URL. Instead of parsing the description part in the PyPI page, I use the `description` field in the package's distribution metadata, which are the same."""
         urls = []
@@ -185,7 +189,9 @@ class URLFinder:
                                 + "/"
                                 + badge_url_path_parts[2]
                             )
-                            badge_url = URLFinder.real_github_url(badge_url)
+                            badge_url = URLFinder.real_github_url(
+                                badge_url, session, logger
+                            )
                             if badge_url:
                                 badge_url = badge_url.rstrip("/")
                                 urls.append(badge_url)
@@ -247,37 +253,41 @@ class URLFinder:
                 return homepage_url
 
             codepage_url = URLFinder.get_codepage(metadata)
-            if URLFinder.is_valid_github_url(codepage_url):
+            if codepage_url and URLFinder.is_valid_github_url(codepage_url):
                 return codepage_url
         return None
 
     @staticmethod
-    def mode_1(metadata: dict[str, Optional[str | dict[str, str]]]) -> Optional[str]:
+    def mode_1(
+        metadata: dict[str, Optional[str | dict[str, str]]], session=None, logger=None
+    ) -> Optional[str]:
         github_url_metadata = URLFinder.find_github_url_metadata(metadata)
         if github_url_metadata:
-            return URLFinder.real_github_url(github_url_metadata)
+            return URLFinder.real_github_url(github_url_metadata, session, logger)
         return None
 
     @staticmethod
-    def scrape_source_name_from_webpage(name: str, url: Optional[str]) -> Optional[str]:
+    def scrape_source_name_from_webpage(
+        name: str, url: Optional[str], session=None, logger=None
+    ) -> Optional[str]:
         """reimplementation of `scrape_source_name_from_webpage` method in [src/url_finder.py](https://github.com/simonepirocca/py2src/blob/master/src/url_finder.py#L97)"""
         if not url:
             return None
+        if not validators.url(url):
+            return None
 
         package_in_github_urls = []
-        response = safe_get(url)
+        response = safe_get(url, session, logger)
         if response and response.status_code == 200:
             soup = BeautifulSoup(response.text, "html.parser")
             for link in soup.findAll("a"):
                 href_url = link.get("href")
-                # print(href_url)
                 if href_url:
                     url_parts = urlparse(href_url)
                     if url_parts.netloc in ["github.com"]:
                         regex = "[^a-zA-Z0-9]"
                         if name.replace(regex, "") in url_parts.path.replace(regex, ""):
                             package_in_github_urls.append(href_url)
-        # print(package_in_github_urls)
         common_url = os.path.commonprefix(package_in_github_urls)
         if common_url:
             common_url = common_url.strip("/")
@@ -289,20 +299,21 @@ class URLFinder:
         return None
 
     @staticmethod
-    def mode_2(metadata: dict[str, Optional[str | dict[str, str]]]) -> Optional[str]:
+    def mode_2(
+        metadata: dict[str, Optional[str | dict[str, str]]], session=None, logger=None
+    ) -> Optional[str]:
         if metadata and metadata.get("project_urls"):
             homepage_url = URLFinder.get_homepage(metadata)
             github_url_homepage = URLFinder.scrape_source_name_from_webpage(
                 metadata.get("name"), homepage_url
             )
-            print(github_url_homepage)
             if github_url_homepage:
-                return URLFinder.real_github_url(github_url_homepage)
+                return URLFinder.real_github_url(github_url_homepage, session, logger)
         return None
 
     @staticmethod
     def find_github_url_from_readthedocs(
-        metadata: dict[str, Optional[str | dict[str, str]]]
+        metadata: dict[str, Optional[str | dict[str, str]]], session=None, logger=None
     ) -> Optional[str]:
         if not metadata:
             return None
@@ -312,19 +323,17 @@ class URLFinder:
             for value in metadata.get("project_urls").values():
                 if "readthedocs.io" in value:
                     links.append(value)
-        print(links)
         if rendered:
             soup = BeautifulSoup(rendered, "html.parser")
             for link in soup.findAll("a"):
                 href_url = link.get("href", "").replace(" ", "")
                 if "readthedocs.io" in href_url:
                     links.append(href_url)
-        print(links)
         link_url = Counter(links).most_common(1)[0][0] if links else None
 
         urls = []
         if link_url:
-            response = safe_get(link_url)
+            response = safe_get(link_url, session, logger)
             if response and response.status_code == 200:
                 docs_soup = BeautifulSoup(response.text, "html.parser")
                 for link in docs_soup.findAll("a"):
@@ -353,7 +362,9 @@ class URLFinder:
                             + "/"
                             + tmp_url_path_parts[2]
                         )
-                        docs_github_url = URLFinder.real_github_url(docs_github_url)
+                        docs_github_url = URLFinder.real_github_url(
+                            docs_github_url, session, logger
+                        )
                         if docs_github_url:
                             docs_github_url = docs_github_url.rstrip("/")
                             urls.append(docs_github_url)
@@ -366,3 +377,139 @@ class URLFinder:
     ) -> Optional[str]:
         """reimplementation of `find_github_url_from_pypi_statistics` method in [src/url_finder.py](https://github.com/simonepirocca/py2src/blob/master/src/url_finder.py#L369). Since the GitHub statistics section is based on the GitHub repository URL retrieved by warehouse. So I just call the reimplemented Warehouse class."""
         return Warehouse.parse_metadata(metadata)
+
+
+T = TypeVar("T")
+
+
+def chunks(lst: Iterable[T], n: int) -> Generator[list[T], None, None]:
+    lst = lst[::-1]
+    """Yield successive n-sized chunks from lst."""
+    for i in range(0, len(lst), n):
+        yield lst[i : i + n]
+
+
+def main(names: list[str], i: int, token: str = None):
+    logger = configure_logger(f"py2src-{i}", f"log/py2src-{i}.log", logging.DEBUG)
+    with open(f"data/py2src-{i}.csv", "w") as f:
+        pass
+
+    session = requests.Session()
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
+        "Connection": "close",
+    }
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    proxies = {
+        "http": "http://162.105.88.97:7890",
+        "https": "http://162.105.88.97:7890",
+    }
+
+    retries = Retry(
+        total=3,
+        backoff_factor=0.1,
+        status_forcelist=[502, 503, 504],
+    )
+
+    session = requests.Session()
+    session.headers.update(headers)
+    session.verify = False
+    session.proxies = proxies
+    with open(f"data/py2src-{i}.csv", "a") as f:
+        # writer = csv.writer(f)
+        for name in tqdm(names):
+            for metadata in release_metadata.find(
+                {"name": name},
+                projection={
+                    "_id": 0,
+                    "name": 1,
+                    "version": 1,
+                    "home_page": 1,
+                    "download_url": 1,
+                    "project_urls": 1,
+                    "description": 1,
+                    "description_content_type": 1,
+                },
+            ):
+                name = metadata["name"]
+                version = metadata["version"]
+                logger.info(f"Start {name}, {version}")
+                try:
+                    proposed_urls = Py2Src.parse_metadata(metadata, session, logger)
+                    line = f"{name},{version}"
+                    for url in proposed_urls:
+                        line = line + ","
+                        if url:
+                            line = line + url
+
+                    tmp = [_ for _ in proposed_urls if _]
+                    mode_url = Counter(tmp).most_common(1)[0][0] if tmp else None
+                    line = line + ","
+                    if mode_url:
+                        line = line + mode_url
+                    elif proposed_urls[0]:
+                        line = line + proposed_urls[0]
+                    line = line + "\n"
+                    f.write(line)
+                    f.flush()
+                except Exception as e:
+                    logger.error(f"Exception: {name}, {version}, {e}")
+
+                logger.info(f"Finish {name}, {version}")
+    session.close()
+
+
+def error_names():
+    res = []
+    prev = None
+    for i in range(300):
+        with open(f"log/py2src-{i}.log") as f:
+            for line in f:
+                msg = line.strip("\n").split(" - ")[-1]
+                if msg.startswith("Start ") or msg.startswith("Exception "):
+                    prev = msg.split(" ", 1)[1].split(", ")[0]
+                elif msg.startswith("Http Error: "):
+                    error_no = msg.split(" ")[2]
+                    if error_no != "404":
+                        res.append(prev)
+                elif (
+                    msg.startswith("Error Connecting: ")
+                    or msg.startswith("Timeout Error: ")
+                    or msg.startswith("OOps, Something Else: ")
+                ):
+                    res.append(prev)
+    return list(set(res))
+
+
+def unvisited():
+    visited = []
+    for i in range(0, 300):
+        with open(f"data/py2src{i}.csv") as f:
+            for line in f:
+                name, version = line.split(",")[:2]
+                visited.append((name, version))
+
+    all_names = []
+    for metadata in release_metadata.find({}, {"_id": 0, "name": 1, "version": 1}):
+        name = metadata["name"]
+        version = metadata["version"]
+        all_names.append((name, version))
+
+    tmp = set(all_names) - set(visited)
+    return list(set([n for n, _ in tmp]))
+
+
+if __name__ == "__main__":
+    # from multiprocessing import Pool
+    # p = Pool(20)
+    from joblib import Parallel, delayed
+
+    names = release_metadata.find({}).distinct("name")
+    # names = list(set(unvisited() + error_names()))
+    print(f"{len(names)} packages to be processed")
+    chunk_lst = chunks(names, len(names) // 10 + 1)
+    Parallel(n_jobs=10, backend="multiprocessing")(
+        delayed(main)(task, i % 10) for i, task in enumerate(chunk_lst)
+    )

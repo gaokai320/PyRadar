@@ -1,3 +1,5 @@
+import logging
+
 from packaging.version import Version
 from pymongo import MongoClient
 
@@ -301,3 +303,16 @@ def get_latest_version(package_name: str) -> str:
     versions = [v for v in versions if not (v.is_prerelease or v.is_devrelease)]
     versions.sort()
     return str(versions[-1]) if versions else None
+
+
+def configure_logger(name: str, log_file: str, level: int):
+    logger = logging.getLogger(name)
+    logger.setLevel(level)
+    fh = logging.FileHandler(log_file, "w")
+    fh.setLevel(level)
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(threadName)s - %(message)s"
+    )
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+    return logger
