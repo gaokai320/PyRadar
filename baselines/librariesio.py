@@ -1,6 +1,16 @@
+import csv
+import logging
 from typing import Optional
 
+from pymongo import MongoClient
+from tqdm import tqdm
+
 from baselines.url_parser import URLParser
+from baselines.utils import GITHUB_RESERVED_NAMES, configure_logger
+
+logger = configure_logger("librariesio", "log/librariesio.log", logging.DEBUG)
+
+release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
 
 
 class LibrariesIO:
@@ -58,3 +68,33 @@ class LibrariesIO:
         if homepage_url:
             return homepage_url
         return None
+
+
+if __name__ == "__main__":
+    with open("data/Libraries.io.csv", "w") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "version", "Libraries.io"])
+        for metadata in tqdm(
+            release_metadata.find(
+                {},
+                projection={
+                    "_id": 0,
+                    "name": 1,
+                    "version": 1,
+                    "home_page": 1,
+                    "download_url": 1,
+                    "project_urls": 1,
+                },
+            )
+        ):
+            try:
+                name = metadata["name"]
+                version = metadata["version"]
+                repo_url = LibrariesIO.parse_metadata(metadata)
+                if repo_url:
+                    writer.writerow([name, version, repo_url.lower()])
+                else:
+                    writer.writerow([name, version, None])
+            except Exception as e:
+                logger.error(f"{name}, {version}, {e}")
+                break

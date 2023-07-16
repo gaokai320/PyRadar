@@ -1,5 +1,16 @@
+import csv
+import logging
 import re
 from typing import Optional
+
+from pymongo import MongoClient
+from tqdm import tqdm
+
+from baselines.utils import configure_logger
+
+logger = configure_logger("ossgadget", "log/ossgadget.log", logging.DEBUG)
+
+release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
 
 # Reference to: https://github.com/microsoft/OSSGadget/blob/main/src/Shared/PackageManagers/BaseProjectManager.cs#L68
 pattern = re.compile(r"github\.com/([a-z0-9\-_\.]+)/([a-z0-9\-_\.]+)", flags=re.I)
@@ -64,3 +75,33 @@ class OSSGadget:
             res.append(f"https://github.com/{user}/{repo}")
 
         return res
+
+
+if __name__ == "__main__":
+    with open("data/OSSGadget.csv", "w") as f:
+        writer = csv.writer(f)
+        writer.writerow(["name", "version", "OSSGadget"])
+        for metadata in tqdm(
+            release_metadata.find(
+                {},
+                projection={
+                    "_id": 0,
+                    "name": 1,
+                    "version": 1,
+                    "home_page": 1,
+                    "download_url": 1,
+                    "project_urls": 1,
+                },
+            )
+        ):
+            try:
+                name = metadata["name"]
+                version = metadata["version"]
+                repo_url = OSSGadget.parse_metadata(metadata)
+                if repo_url:
+                    writer.writerow([name, version, repo_url.lower()])
+                else:
+                    writer.writerow([name, version, None])
+            except Exception as e:
+                logger.error(f"{name}, {version}, {e}")
+                break
