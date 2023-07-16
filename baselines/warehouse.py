@@ -86,7 +86,7 @@ class Warehouse:
 if __name__ == "__main__":
     with open("data/Warehouse.csv", "w") as f:
         writer = csv.writer(f)
-        writer.writerow(["name", "version", "OSSGadget"])
+        writer.writerow(["name", "version", "Warehouse"])
         for metadata in tqdm(
             release_metadata.find(
                 {},
