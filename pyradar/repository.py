@@ -5,14 +5,16 @@ import os
 import shutil
 from functools import cached_property
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urljoin, urlparse
 
 import git
 from git import GitCommandError, GitDB, InvalidGitRepositoryError, Repo
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
+logger.setLevel(logging.ERROR)
+
+failed_urls = []
 
 
 def assemble_repo_folder(url: str, base_folder: str) -> str:
@@ -25,10 +27,21 @@ def assemble_repo_folder(url: str, base_folder: str) -> str:
     Returns:
         str: the folder path for the repository
     """
+    # if url.endswith(".git"):
+    #     url = url[:-4]
     parsed = urlparse(url)
     return os.path.join(
         base_folder, "repository", parsed.netloc, parsed.path.strip("/")
     )
+
+
+def normalize_git_url(url: str):
+    if url.startswith("https://"):
+        return url
+    elif url.startswith("git@"):
+        return "https://" + url.rsplit("@", 1)[1].replace(":", "/")
+    elif url.startswith("git://"):
+        return "https://" + url[6:]
 
 
 class Repository:
@@ -40,13 +53,17 @@ class Repository:
             base_folder (str): the folder that stores repository and relevant data.
         """
         self.url = url.strip("/")
+        # if self.url.startswith("git@"):
+        #     self.url = "https://" + self.url.split("@", 1)[1]
+        self.base_folder = base_folder
         self.data_folder = assemble_repo_folder(url, base_folder)
         self.repo_path = os.path.join(self.data_folder, "repo")
-        self.repo = Repository.safe_open(self.repo_path, self.url)
+        self.repo = self.safe_open(self.repo_path, self.url)
         self.tree_cache = {}
+        self.submodule_flag = True
 
-    @staticmethod
-    def safe_open(repo_path: str, url: str) -> Optional[Repo]:
+    # @staticmethod
+    def safe_open(self, repo_path: str, url: str) -> Optional[Repo]:
         """Open a repository from `repo_path`. If not a valid git repository, clone it from `url`.
 
         Args:
@@ -59,6 +76,11 @@ class Repository:
         Returns:
             Optional[Repo]: the git.Repo object
         """
+        # We only consider GitHub, GitLab, Bitbucket repositories.
+        if not any(
+            [loc in url for loc in ["github.com", "gitlab.com", "bitbucket.org"]]
+        ):
+            return None
         repo = None
         # try to open the repository
         if os.path.exists(repo_path):
@@ -71,14 +93,25 @@ class Repository:
 
         # if not a valid git repository, clone it
         if not repo:
+            if url.startswith("https://"):
+                segments = url[8:].split("/")
+                if len(segments) < 3:
+                    return None
+                url = f"git@{segments[0]}:{segments[1]}/{segments[2]}"
             try:
                 repo = Repo.clone_from(url, repo_path, odbt=GitDB)
                 logger.info(f"Clone repository from {url} to {repo_path} successfully")
             except GitCommandError as e:
-                logger.error(f"Failed to clone repository {url}. {e.stderr}")
-                raise FileNotFoundError(
-                    f"Fail to clone repository from {url} to {repo_path}"
+                error_msg = e.stderr
+                for line in e.stderr.split("\n"):
+                    if line.startswith("fatal"):
+                        error_msg = line.strip("\n")
+                logger.error(
+                    f"{self.repo_path}: Failed to clone repository {url}. {error_msg}"
                 )
+                # raise FileNotFoundError(
+                #     f"Fail to clone repository from {url} to {repo_path}"
+                # )
         return repo
 
     @cached_property
@@ -93,11 +126,13 @@ class Repository:
                 ).split("\n")
 
                 for obj in output:
+                    if len(obj.split(" ")) < 3:
+                        break
                     obj_sha, obj_type, _ = obj.split(" ")
                     if obj_type in ["commit", "tree", "blob", "tag"]:
                         object_shas[obj_type].append(obj_sha)
             except Exception as e:
-                logger.error(e)
+                logger.error(f"Object Shas error of {self.repo_path}: {e}")
         logger.info("finish listing all git objects")
         return object_shas
 
@@ -115,12 +150,13 @@ class Repository:
     def tag_shas(self) -> dict[str, str]:
         """a dict of tag object names (e.g., v0.1.0) with the commit shas they point to"""
         res = {}
-        for tag in self.repo.tags:
-            res[tag.name] = tag.commit.hexsha
+        if self.repo:
+            for tag in self.repo.tags:
+                res[tag.name] = tag.commit.hexsha
         return res
 
     @staticmethod
-    def parse_gitmodules(content: str) -> dict[str, str]:
+    def parse_gitmodules(content: str, base_url: str) -> dict[str, str]:
         """parse the .gitmodules file and return a dict of submodule paths and corresponding urls
 
         Args:
@@ -131,12 +167,14 @@ class Repository:
         sms = {}
         for section in config.sections():
             path = config[section]["path"]
-            url = config[section]["url"]
+            url = config[section]["url"].split("\n")[0]
+            if url.startswith("."):
+                url = urljoin(base_url, url)
             sms[path] = url
         return sms
 
     def traverse(
-        self, root_tree: git.Tree, root_path="", base_folder: str = None, sms: dict = {}
+        self, root_tree: git.Tree, root_path="", sms: dict = {}
     ) -> list[tuple[str, str]]:
         """traverse the tree object and return a list of (filename, sha) pairs
 
@@ -153,11 +191,12 @@ class Repository:
         # if the tree is already traversed, return the cached result
         files = self.tree_cache.get(root_tree.hexsha, [])
         if files:
-            logger.info(f"tree {root_tree.hexsha} is already traversed")
+            # logger.info(f"tree {root_tree.hexsha} is already traversed")
             return files
 
         repo = root_tree.repo
         logger.info(f"traversing tree {root_tree.hexsha} in repository {repo}")
+        # logger.error(f"{root_tree.hexsha}")
 
         # # unchecked stores the tree objects that are not traversed yet
         # unchecked = [(root_tree, "")]
@@ -176,13 +215,16 @@ class Repository:
                 # only consider .gitmodules file in the root folder
                 if (not sms) and (name == ".gitmodules"):
                     gitmodules_content = repo.git.cat_file("-p", sha)
-                    sms = Repository.parse_gitmodules(gitmodules_content)
-                    logger.info(f"submodules detected: {sms}")
+                    sms = Repository.parse_gitmodules(gitmodules_content, self.url)
+                    # only print once
+                    if self.submodule_flag:
+                        logger.error(f"Submodules detected for {self.repo_path}")
+                        self.submodule_flag = False
 
             # if the object is a tree, traverse it
             elif obj_type == "tree":
                 tree_files = self.traverse(
-                    repo.tree(sha), os.path.join(root_path, name), base_folder, sms
+                    repo.tree(sha), os.path.join(root_path, name), sms
                 )
                 files.extend(tree_files)
 
@@ -193,22 +235,31 @@ class Repository:
                 if sm_path in sms:
                     url = sms[sm_path]
 
-                    # if base_folder is not specified, try to get it from the environment variable DATA_HOME
-                    if base_folder is None:
-                        base_folder = os.environ.get("DATA_HOME", None)
-                    # if the DATA_HOME environment variable is not set, raise an error
-                    if base_folder is None:
-                        raise FileNotFoundError("base_folder is not specified")
+                    # # if base_folder is not specified, try to get it from the environment variable DATA_HOME
+                    # if base_folder is None:
+                    #     base_folder = os.environ.get("DATA_HOME", None)
+                    # # if the DATA_HOME environment variable is not set, raise an error
+                    # if base_folder is None:
+                    #     raise FileNotFoundError("base_folder is not specified")
 
                     # traverse the submodule
+                    url = normalize_git_url(url)
                     repo_path = os.path.join(
-                        assemble_repo_folder(url, base_folder), "repo"
+                        assemble_repo_folder(url, self.base_folder), "repo"
                     )
-                    tmp_repo = Repository.safe_open(repo_path, url)
-                    sm_files = self.traverse(
-                        tmp_repo.commit(sha).tree, sm_path, base_folder, {}
-                    )
-                    files.extend(sm_files)
+                    if url not in failed_urls:
+                        tmp_repo = self.safe_open(repo_path, url)
+                        if tmp_repo:
+                            try:
+                                tmp_cmt = tmp_repo.commit(sha)
+                                sm_files = self.traverse(tmp_cmt.tree, sm_path, {})
+                                files.extend(sm_files)
+                            except Exception as e:
+                                logger.error(
+                                    f"Submodule error of {self.repo_path}: {sha} not in submodule {sm_path}: {url}"
+                                )
+                        else:
+                            failed_urls.append(url)
 
         # tmp = [(sha, os.path.join(root_path, path)) for sha, path in files]
         self.tree_cache[root_tree.hexsha] = files
@@ -227,7 +278,6 @@ class Repository:
         return self.traverse(
             root_tree=commit.tree,
             root_path="",
-            base_folder=os.environ.get("DATA_HOME", None),
             sms={},
         )
 
@@ -245,20 +295,22 @@ class Repository:
         commits = []
         edges = []
 
-        for commit in tqdm(self.commit_shas, ascii=" >="):
+        # for commit in tqdm(self.commit_shas, ascii=" >="):
+        for commit in self.commit_shas:
             logger.info(f"start listing commit {commit}")
             ts = self.repo.commit(commit).authored_date
             commits.append((commit, ts))
 
             # different files may have the same blob sha
             tmp = {}
+            # print(commit)
             for blob_sha, blob_name in self.snapshot(commit):
                 blobs.append(blob_sha)
                 tmp[blob_sha] = tmp.get(blob_sha, [])
                 tmp[blob_sha].append(blob_name)
             for blob_sha, blob_names in tmp.items():
                 edges.append((commit, blob_sha, blob_names))
-            logger.info(f"finish listing commit {commit}")
+            # logger.info(f"finish listing commit {commit}")
 
         # for space efficiency, we map the blob shas and commit shas to index
         # and replace the original shas with the indices in the graph
@@ -267,9 +319,8 @@ class Repository:
         nodes = {}
         nodes["blob"] = {sha: i for i, sha in enumerate(blobs)}
         num_blobs = len(blobs)
-        nodes["commit"] = {
-            sha: (num_blobs + i, ts) for i, (sha, ts) in enumerate(commits)
-        }
+        commits.sort(key=lambda x: x[1])
+        nodes["commit"] = {sha: (i, ts) for i, (sha, ts) in enumerate(commits)}
         with open(nodes_path, "w") as outf:
             json.dump(nodes, outf, indent=4)
         logger.info(f"finish dumping nodes to idx2sha.json")
@@ -285,6 +336,9 @@ class Repository:
             for f in fs:
                 minified_edges[bid][f] = minified_edges[bid].get(f, [])
                 minified_edges[bid][f].append(cid)
+        for bid, f_cid in minified_edges.items():
+            for f in f_cid.keys():
+                minified_edges[bid][f].sort()
         with open(graph_path, "w") as outf:
             json.dump(minified_edges, outf)
         logger.info("finish dumping to b2fc.json")
