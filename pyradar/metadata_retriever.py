@@ -25,7 +25,7 @@ class MetadataRetriever:
             if match:
                 return "https://" + match.group(0)
         if project_urls:
-            for url in project_urls:
+            for url in project_urls.values():
                 match = pattern.search(url)
                 if match:
                     return "https://" + match.group(0)
