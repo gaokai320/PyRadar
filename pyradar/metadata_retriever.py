@@ -5,6 +5,8 @@ pattern = re.compile(
     r"(github\.com|bitbucket\.org|gitlab\.com)/[a-zA-Z0-9_\.\-]+/[a-zA-Z0-9_\.\-]+"
 )
 
+removed_urls = ["https://github.com/sponsors", "https://github.com/pypa/sampleprojec", "https://github.com/user/reponame"]
+
 
 class MetadataRetriever:
     @staticmethod
@@ -13,22 +15,28 @@ class MetadataRetriever:
     ) -> Optional[str]:
         if not metadata:
             return None
-        home_page = metadata.get("home_page")
-        download_url = metadata.get("download_url")
+        home_page = metadata.get("home_page").lower()
+        download_url = metadata.get("download_url").lower()
         project_urls = metadata.get("project_urls", [])
         if home_page:
             match = pattern.search(home_page)
             if match:
-                return "https://" + match.group(0)
+                return "https://" + match.group(0).rstrip(".git")
         if download_url:
             match = pattern.search(download_url)
             if match:
-                return "https://" + match.group(0)
+                return "https://" + match.group(0).rstrip(".git")
         if project_urls:
             for url in project_urls.values():
+                url = url.lower()
                 match = pattern.search(url)
                 if match:
-                    return "https://" + match.group(0)
+                    remove = False
+                    for removed_url in removed_urls:
+                        if removed_url in url: 
+                            remove = True
+                    if not remove:
+                        return "https://" + match.group(0).rstrip(".git")
         return None
 
 

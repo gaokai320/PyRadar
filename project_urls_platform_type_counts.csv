@@ -1,4 +1,4 @@
-count,matched_urls
+count,name,version,matched_urls
 2,gnnrl,1.0.4,"{'https://github.com/anonymous429/gnn-rl-model-compression', 'https://github.com/yusx-swapp/gnn-rl-model-compression'}"
 2,gnnrl,1.0.2,"{'https://github.com/anonymous429/gnn-rl-model-compression', 'https://github.com/yusx-swapp/gnn-rl-model-compression'}"
 2,gnnrl,1.0.7,"{'https://github.com/anonymous429/gnn-rl-model-compression', 'https://github.com/yusx-swapp/gnn-rl-model-compression'}"
