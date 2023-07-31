@@ -133,3 +133,5 @@ data/
 figures/
 .idea/
 # tests/
+
+playground.ipynb
