@@ -16,3 +16,5 @@ wget==3.2
 pytest==7.3.1
 ipykernel==6.23.1
 readme-renderer[md]==40.0
+validators==0.20.0
+urllib3==1.26.16
