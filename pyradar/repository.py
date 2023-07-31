@@ -1,15 +1,17 @@
 import configparser
 import json
 import logging
+import math
 import os
 import shutil
 from functools import cached_property
 from typing import Optional
 from urllib.parse import urljoin, urlparse
 
-import git
 from git import GitCommandError, GitDB, InvalidGitRepositoryError, Repo
 from tqdm import tqdm
+
+from pyradar.utils import CacheDict
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.ERROR)
@@ -45,7 +47,13 @@ def normalize_git_url(url: str):
 
 
 class Repository:
-    def __init__(self, url: str, base_folder: str) -> None:
+    def __init__(
+        self,
+        url: str,
+        base_folder: str,
+        chunk_size: int = 1000,
+        tree_cache_size: int = 30000,
+    ) -> None:
         """Create a wrapped `gitpython.Repo` object.
 
         Args:
@@ -59,8 +67,9 @@ class Repository:
         self.data_folder = assemble_repo_folder(url, base_folder)
         self.repo_path = os.path.join(self.data_folder, "repo")
         self.repo = self.safe_open(self.repo_path, self.url)
-        self.tree_cache = {}
         self.submodule_flag = True
+        self.chunk_size = chunk_size
+        self.tree_cache_size = tree_cache_size
 
     # @staticmethod
     def safe_open(self, repo_path: str, url: str) -> Optional[Repo]:
@@ -95,7 +104,7 @@ class Repository:
         if not repo:
             if url.startswith("https://"):
                 segments = url[8:].split("/")
-                if len(segments) < 3:
+                if len(segments) != 3:
                     return None
                 url = f"git@{segments[0]}:{segments[1]}/{segments[2]}"
             try:
@@ -142,9 +151,14 @@ class Repository:
         return self.object_shas["tree"]
 
     @cached_property
-    def commit_shas(self) -> list[str]:
+    def commit_shas(self) -> list[tuple[str, int]]:
         """a list of all commit object shas"""
-        return self.object_shas["commit"]
+        commits = []
+        for commit in self.object_shas["commit"]:
+            ts = self.repo.commit(commit).authored_date
+            commits.append((commit, ts))
+        commits.sort(key=lambda x: x[1])
+        return commits
 
     @cached_property
     def tag_shas(self) -> dict[str, str]:
@@ -163,18 +177,26 @@ class Repository:
             content (str): the content of the .gitmodules file
         """
         config = configparser.ConfigParser()
-        config.read_string(content)
         sms = {}
-        for section in config.sections():
-            path = config[section]["path"]
-            url = config[section]["url"].split("\n")[0]
-            if url.startswith("."):
-                url = urljoin(base_url, url)
-            sms[path] = url
+        try:
+            config.read_string(content)
+            for section in config.sections():
+                path = config[section]["path"]
+                url = config[section]["url"].split("\n")[0]
+                if url.startswith("."):
+                    url = urljoin(base_url, url)
+                sms[path] = url
+        except:
+            pass
         return sms
 
     def traverse(
-        self, root_tree: git.Tree, root_path="", sms: dict = {}
+        self,
+        tree_hexsha: str,
+        repo: Repo,
+        root_path: str = "",
+        sms: dict = {}
+        # self, root_tree: git.Tree, root_path="", sms: dict = {}
     ) -> list[tuple[str, str]]:
         """traverse the tree object and return a list of (filename, sha) pairs
 
@@ -189,20 +211,19 @@ class Repository:
         """
 
         # if the tree is already traversed, return the cached result
-        files = self.tree_cache.get(root_tree.hexsha, [])
+        files = self.tree_cache.get(tree_hexsha, [])
         if files:
-            # logger.info(f"tree {root_tree.hexsha} is already traversed")
+            # logger.info(f"tree {tree_hexsha} is already traversed")
             return files
 
-        repo = root_tree.repo
-        logger.info(f"traversing tree {root_tree.hexsha} in repository {repo}")
-        # logger.error(f"{root_tree.hexsha}")
+        logger.info(f"traversing tree {tree_hexsha} in repository {repo}")
+        # logger.error(f"{tree_hexsha}")
 
         # # unchecked stores the tree objects that are not traversed yet
         # unchecked = [(root_tree, "")]
         # while len(unchecked) > 0:
         #     tree, path = unchecked.pop()
-        for item in repo.git.cat_file("-p", root_tree.hexsha).split("\n"):
+        for item in repo.git.cat_file("-p", tree_hexsha).split("\n"):
             if item == "":
                 continue
             _, obj_type, sha_name = item.split(" ", 2)
@@ -215,6 +236,8 @@ class Repository:
                 # only consider .gitmodules file in the root folder
                 if (not sms) and (name == ".gitmodules"):
                     gitmodules_content = repo.git.cat_file("-p", sha)
+                    # print(tree_hexsha)
+                    # print(gitmodules_content)
                     sms = Repository.parse_gitmodules(gitmodules_content, self.url)
                     # only print once
                     if self.submodule_flag:
@@ -223,8 +246,9 @@ class Repository:
 
             # if the object is a tree, traverse it
             elif obj_type == "tree":
+                # print(sha)
                 tree_files = self.traverse(
-                    repo.tree(sha), os.path.join(root_path, name), sms
+                    sha, repo, os.path.join(root_path, name), sms
                 )
                 files.extend(tree_files)
 
@@ -243,7 +267,11 @@ class Repository:
                     #     raise FileNotFoundError("base_folder is not specified")
 
                     # traverse the submodule
+                    # print(url)
                     url = normalize_git_url(url)
+                    if not url:
+                        continue
+                    # print(url)
                     repo_path = os.path.join(
                         assemble_repo_folder(url, self.base_folder), "repo"
                     )
@@ -251,8 +279,14 @@ class Repository:
                         tmp_repo = self.safe_open(repo_path, url)
                         if tmp_repo:
                             try:
-                                tmp_cmt = tmp_repo.commit(sha)
-                                sm_files = self.traverse(tmp_cmt.tree, sm_path, {})
+                                tree_hash = (
+                                    tmp_repo.git.cat_file("-p", sha)
+                                    .split("\n")[0]
+                                    .split(" ")[1]
+                                )
+                                sm_files = self.traverse(
+                                    tree_hash, tmp_repo, sm_path, {}
+                                )
                                 files.extend(sm_files)
                             except Exception as e:
                                 logger.error(
@@ -262,7 +296,7 @@ class Repository:
                             failed_urls.append(url)
 
         # tmp = [(sha, os.path.join(root_path, path)) for sha, path in files]
-        self.tree_cache[root_tree.hexsha] = files
+        self.tree_cache[tree_hexsha] = files
         return files
 
     def snapshot(self, commit_sha: str) -> list[tuple[str, str]]:
@@ -274,9 +308,12 @@ class Repository:
         Returns:
             list[tuple[str, str]]: a list containing the filenames and corresponding hex shas.
         """
-        commit = self.repo.commit(commit_sha)
+        tree_hash = (
+            self.repo.git.cat_file("-p", commit_sha).split("\n")[0].split(" ")[1]
+        )
         return self.traverse(
-            root_tree=commit.tree,
+            tree_hexsha=tree_hash,
+            repo=self.repo,
             root_path="",
             sms={},
         )
@@ -288,39 +325,63 @@ class Repository:
 
         graph_path = os.path.join(self.data_folder, "b2fc.json")
         nodes_path = os.path.join(self.data_folder, "idx2sha.json")
+        tmp_path = os.path.join(self.data_folder, "tmp{}.json")
         if os.path.exists(graph_path):
             return
 
-        blobs = []
-        commits = []
-        edges = []
+        blobs = set()
+        # commits = []
+        edges = {}
+        filenames = set()
 
-        # for commit in tqdm(self.commit_shas, ascii=" >="):
-        for commit in self.commit_shas:
+        tmp_file_cnt = 0
+
+        # for i, commit_ts in enumerate(tqdm(self.commit_shas, ascii=" >="), start=1):
+        for i, commit_ts in enumerate(self.commit_shas, start=1):
+            commit = commit_ts[0]
             logger.info(f"start listing commit {commit}")
-            ts = self.repo.commit(commit).authored_date
-            commits.append((commit, ts))
+            # ts = self.repo.commit(commit).authored_date
+            # commits.append((commit, ts))
 
             # different files may have the same blob sha
             tmp = {}
             # print(commit)
+            edges[commit] = {}
             for blob_sha, blob_name in self.snapshot(commit):
-                blobs.append(blob_sha)
+                blobs.add(blob_sha)
+                filenames.add(blob_name)
+                edges[commit].app
                 tmp[blob_sha] = tmp.get(blob_sha, [])
                 tmp[blob_sha].append(blob_name)
             for blob_sha, blob_names in tmp.items():
-                edges.append((commit, blob_sha, blob_names))
+                edges[commit][blob_sha] = blob_names
+
+            # dump edges to tmp file every 1000 commits in case of memory explosion :(
+            if i % 1000 == 0:
+                with open(tmp_path.format(tmp_file_cnt), "w") as f:
+                    json.dump(edges, f)
+                tmp_file_cnt += 1
+                edges = {}
             # logger.info(f"finish listing commit {commit}")
 
+        # dump the remaining edges to tmp file
+        if len(edges) > 0:
+            with open(tmp_path.format(tmp_file_cnt), "w") as f:
+                json.dump(edges, f)
+            tmp_file_cnt += 1
+            edges = []
+
+        self.tree_cache = CacheDict()
         # for space efficiency, we map the blob shas and commit shas to index
         # and replace the original shas with the indices in the graph
         logger.info(f"start dumping nodes to idx2sha.json")
-        blobs = list(set(blobs))
+        blobs = list(blobs)
         nodes = {}
         nodes["blob"] = {sha: i for i, sha in enumerate(blobs)}
+        nodes["commit"] = {sha: [i, ts] for i, (sha, ts) in enumerate(self.commit_shas)}
+        filenames = list(filenames)
+        nodes["filename"] = {fn: i for i, fn in enumerate(filenames)}
         num_blobs = len(blobs)
-        commits.sort(key=lambda x: x[1])
-        nodes["commit"] = {sha: (i, ts) for i, (sha, ts) in enumerate(commits)}
         with open(nodes_path, "w") as outf:
             json.dump(nodes, outf, indent=4)
         logger.info(f"finish dumping nodes to idx2sha.json")
@@ -330,12 +391,17 @@ class Repository:
         minified_edges = {
             i: {} for i in range(num_blobs)
         }  # type: dict[int, dict[str, list[int]]]
-        for c, b, fs in edges:
-            bid = nodes["blob"][b]
-            cid = nodes["commit"][c][0]
-            for f in fs:
-                minified_edges[bid][f] = minified_edges[bid].get(f, [])
-                minified_edges[bid][f].append(cid)
+        for i in range(tmp_file_cnt):
+            with open(tmp_path.format(i)) as f:
+                edges = json.load(f)
+                for c, b_fs in edges.items():
+                    cid = nodes["commit"][c][0]
+                    for b, fs in b_fs.items():
+                        bid = nodes["blob"][b]
+                        for f in fs:
+                            fid = nodes["filename"][f]
+                            minified_edges[bid][fid] = minified_edges[bid].get(fid, [])
+                            minified_edges[bid][fid].append(cid)
         for bid, f_cid in minified_edges.items():
             for f in f_cid.keys():
                 minified_edges[bid][f].sort()
@@ -343,15 +409,100 @@ class Repository:
             json.dump(minified_edges, outf)
         logger.info("finish dumping to b2fc.json")
 
+    def traverse_all(self, disable_pbar: bool = True):
+        """
+        traverse all commits and save the mapping and blob information to json files
+        """
+        snapshot_path = os.path.join(self.data_folder, "snapshot-{}.json")
+        index_path = os.path.join(self.data_folder, "index.json")
+        # b2c_path = os.path.join(self.data_folder, "bid2cid.json")
+        num_chunks = math.ceil(len(self.commit_shas) / self.chunk_size)
+        # print(len(self.commit_shas), self.chunk_size, num_chunks)
+
+        # already traversed completely
+        if os.path.exists(snapshot_path.format(num_chunks - 1)):
+            return
+
+        # LRU cache tree traverse results to speed up
+        self.tree_cache = CacheDict(cache_len=self.tree_cache_size)
+
+        blobs = set()
+        filenames = set()
+        edges = {}
+
+        chunk_id = 0
+
+        for i, commit_ts in enumerate(
+            tqdm(self.commit_shas, ascii=" >=", unit="commit", disable=disable_pbar),
+            start=1,
+        ):
+            # for i, commit_ts in enumerate(self.commit_shas, start=1):
+            commit = commit_ts[0]
+            logger.info(f"start listing commit {commit}")
+
+            # print(commit)
+            edges[commit] = self.snapshot(commit)
+            for blob_sha, blob_name in edges[commit]:
+                blobs.add(blob_sha)
+                filenames.add(blob_name)
+
+            # dump edges to snapshot.json file every `self.chunk_size` commits in case of memory explosion :(
+            if i % self.chunk_size == 0:
+                with open(snapshot_path.format(chunk_id), "w") as f:
+                    json.dump(edges, f)
+                chunk_id += 1
+                edges = {}
+            # logger.info(f"finish listing commit {commit}")
+
+        # dump the remaining edges if any
+        if len(edges) > 0:
+            with open(snapshot_path.format(chunk_id), "w") as f:
+                json.dump(edges, f)
+            chunk_id += 1
+            edges = {}
+
+        # collect tree_cache in case of
+        self.tree_cache = CacheDict()
+        # for space efficiency, we map the blob shas, commit shas, and filenames to index
+        # and replace the original shas with the indices in the snapshots
+        logger.info(f"start dumping to index.json")
+        blobs = list(blobs)
+        blobs.sort()
+        indices = {}
+        indices["blob"] = {sha: i for i, sha in enumerate(blobs)}
+        indices["commit"] = {
+            sha: [i, ts] for i, (sha, ts) in enumerate(self.commit_shas)
+        }
+        filenames = list(filenames)
+        filenames.sort()
+        indices["filename"] = {fn: i for i, fn in enumerate(filenames)}
+        with open(index_path, "w") as outf:
+            json.dump(indices, outf, indent=4)
+        logger.info(f"finish dumping to index.json")
+
+        logger.info("start dumping to snapshot.json")
+        for i in range(chunk_id):
+            filepath = snapshot_path.format(i)
+            edges = json.load(open(filepath))
+            indexed_edges = {}
+            for c, b_fn in edges.items():
+                cid = indices["commit"][c][0]
+                indexed_edges[cid] = [
+                    [indices["blob"][b], indices["filename"][fn]] for b, fn in b_fn
+                ]
+            with open(filepath, "w") as f:
+                json.dump(indexed_edges, f)
+        logger.info("finish dumping to snapshot.json")
+
     @cached_property
     def blob_shas(self) -> list[str]:
         """return a list of all blob shas"""
 
-        nodes_path = os.path.join(self.data_folder, "idx2sha.json")
+        nodes_path = os.path.join(self.data_folder, "index.json")
         if not os.path.exists(nodes_path):
-            logger.info(f"idx2sha.json not exists, start traversing all commits")
-            self.traverse_all_commits()
-        logger.info(f"loading from idx2sha.json")
+            logger.info(f"index.json not exists, start traversing all commits")
+            self.traverse_all()
+        logger.info(f"loading from index.json")
         nodes = json.load(open(nodes_path))
         return list(nodes["blob"].keys())
 
@@ -365,3 +516,15 @@ class Repository:
             str: the content of the blob object
         """
         return self.repo.git.cat_file("-p", blob_sha)
+
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--url", type=str)
+    args = parser.parse_args()
+    url = args.url
+    print(url)
+    repo = Repository(url, "/data/kyle/pypi_data")
+    repo.traverse_all(disable_pbar=False)

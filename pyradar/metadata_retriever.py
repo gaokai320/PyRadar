@@ -5,7 +5,11 @@ pattern = re.compile(
     r"(github\.com|bitbucket\.org|gitlab\.com)/[a-zA-Z0-9_\.\-]+/[a-zA-Z0-9_\.\-]+"
 )
 
-removed_urls = ["https://github.com/sponsors", "https://github.com/pypa/sampleprojec", "https://github.com/user/reponame"]
+removed_urls = [
+    "https://github.com/sponsors",
+    "https://github.com/pypa/sampleprojec",
+    "https://github.com/user/reponame",
+]
 
 
 class MetadataRetriever:
@@ -33,7 +37,7 @@ class MetadataRetriever:
                 if match:
                     remove = False
                     for removed_url in removed_urls:
-                        if removed_url in url: 
+                        if removed_url in url:
                             remove = True
                     if not remove:
                         return "https://" + match.group(0).rstrip(".git")
