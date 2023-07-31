@@ -3,7 +3,7 @@ import logging
 import os
 from collections import Counter
 from email.message import EmailMessage
-from functools import cache
+from functools import lru_cache
 from typing import Generator, Optional, TypeVar
 from urllib.parse import urlparse
 
@@ -94,10 +94,14 @@ class Py2Src:
         ]
 
 
-@cache
+@lru_cache(maxsize=1024)
 def safe_get(url: str, session=None, logger=None) -> Optional[requests.Response]:
     """A robust wrapper of `requests.get` to handle exceptions. Code adapted from https://stackoverflow.com/a/47007419"""
     response = None
+    if not session:
+        session = requests.Session()
+    if not logger:
+        logger = configure_logger("py2src", "log/py2src.log", logging.DEBUG)
     try:
         response = session.get(url)
         response.raise_for_status()
@@ -394,7 +398,7 @@ def main(names: list[str], i: int, token: str = None):
     with open(f"data/py2src-{i}.csv", "w") as f:
         pass
 
-    session = requests.Session()
+    # session = requests.Session()
 
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
@@ -406,12 +410,6 @@ def main(names: list[str], i: int, token: str = None):
         "http": "http://162.105.88.97:7890",
         "https": "http://162.105.88.97:7890",
     }
-
-    retries = Retry(
-        total=3,
-        backoff_factor=0.1,
-        status_forcelist=[502, 503, 504],
-    )
 
     session = requests.Session()
     session.headers.update(headers)
