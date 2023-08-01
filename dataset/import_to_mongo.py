@@ -92,7 +92,7 @@ def dump_distribution_info(data_path: str):
                 for info_data in metadata["urls"]:
                     data = {}
                     data["name"] = canonicalize_name(pkg)
-                    data["version"] = version
+                    data["version"] = version.rsplit(".", 1)[0]
                     for key in ["packagetype", "filename", "upload_time", "url"]:
                         data[key] = info_data.get(key, None)
                     batch.append(data)
