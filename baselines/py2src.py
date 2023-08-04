@@ -1,4 +1,4 @@
-# import csv
+import csv
 import logging
 import os
 from collections import Counter
@@ -416,7 +416,7 @@ def main(names: list[str], i: int, token: str = None):
     session.verify = False
     session.proxies = proxies
     with open(f"data/py2src-{i}.csv", "a") as f:
-        # writer = csv.writer(f)
+        writer = csv.writer(f)
         for name in tqdm(names):
             for metadata in release_metadata.find(
                 {"name": name},
@@ -436,21 +436,12 @@ def main(names: list[str], i: int, token: str = None):
                 logger.info(f"Start {name}, {version}")
                 try:
                     proposed_urls = Py2Src.parse_metadata(metadata, session, logger)
-                    line = f"{name},{version}"
-                    for url in proposed_urls:
-                        line = line + ","
-                        if url:
-                            line = line + url
-
                     tmp = [_ for _ in proposed_urls if _]
                     mode_url = Counter(tmp).most_common(1)[0][0] if tmp else None
-                    line = line + ","
-                    if mode_url:
-                        line = line + mode_url
-                    elif proposed_urls[0]:
-                        line = line + proposed_urls[0]
-                    line = line + "\n"
-                    f.write(line)
+                    line = [name, version]
+                    line.extend(proposed_urls)
+                    line.append(mode_url)
+                    writer.writerow(line)
                     f.flush()
                 except Exception as e:
                     logger.error(f"Exception: {name}, {version}, {e}")
