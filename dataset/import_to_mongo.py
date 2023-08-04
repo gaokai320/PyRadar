@@ -11,7 +11,9 @@ from tqdm import tqdm
 db = MongoClient("127.0.0.1", 27017)["radar"]
 
 
-def dump_metadata(data_path: str):
+def dump_metadata(data_path: str, drop: bool = False):
+    if drop:
+        db.drop_collection("release_metadata")
     metadata_folder = os.path.join(sys.argv[1], "metadata")
     packages = list(os.listdir(metadata_folder))
     col = db["release_metadata"]
@@ -78,7 +80,9 @@ def dump_metadata(data_path: str):
     col.create_index([("name", pymongo.ASCENDING), ("version", pymongo.ASCENDING)])
 
 
-def dump_distribution_info(data_path: str):
+def dump_distribution_info(data_path: str, drop: bool = False):
+    if drop:
+        db.drop_collection("distribution_file_info")
     metadata_folder = os.path.join(sys.argv[1], "metadata")
     packages = list(os.listdir(metadata_folder))
     col = db["distribution_file_info"]
@@ -126,13 +130,15 @@ if __name__ == "__main__":
     parser.add_argument(
         "--distribution", default=False, action=argparse.BooleanOptionalAction
     )
+    parser.add_argument("--drop", default=False, action=argparse.BooleanOptionalAction)
     args = parser.parse_args()
     data_path = args.data_path
     do_metadata = args.metadata
     do_distribution = args.distribution
+    drop = args.drop
 
     if do_metadata:
-        dump_metadata(data_path)
+        dump_metadata(data_path, drop)
 
     if do_distribution:
-        dump_distribution_info(data_path)
+        dump_distribution_info(data_path, drop)

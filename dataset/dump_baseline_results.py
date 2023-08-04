@@ -4,7 +4,8 @@ import pandas as pd
 from pymongo import MongoClient
 
 db = MongoClient("127.0.0.1", 27017)["radar"]
-col = db["package_repository_url"]
+db.drop_collection("package_repository_url")
+col = db.get_collection("package_repository_url")
 
 ossgadget = pd.read_csv("data/OSSGadget.csv")
 warehouse = pd.read_csv("data/Warehouse.csv")
