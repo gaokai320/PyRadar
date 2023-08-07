@@ -6,7 +6,9 @@ from typing import Optional
 
 import pandas as pd
 
-from pyradar.utils import DistReader, configure_logger
+from pyradar.utils import DistReader
+
+logging.basicConfig(format="%(message)s", level=logging.ERROR)
 
 
 def download(
@@ -33,6 +35,65 @@ def download(
             logger.error(f"Error downloading {url}, retry {i}: {e}")
 
     return success
+
+
+def comp(dict1, dict2):
+    res = {"sdist-only": {}, "bdist-only": {}}
+    shas1 = set(dict1.keys())
+    shas2 = set(dict2.keys())
+    for sha in shas1 - shas2:
+        res["sdist-only"][sha] = list(dict1[sha])
+    for sha in shas2 - shas1:
+        res["bdist-only"][sha] = list(dict2[sha])
+
+    for sha in shas1.intersection(shas2):
+        filenames1 = list(dict1[sha])
+        filenames2 = list(dict2[sha])
+        for f1 in filenames1.copy():
+            for f2 in filenames2:
+                if f1.rsplit("/", 1)[-1] == f2.rsplit("/", 1)[-1]:
+                    filenames1.remove(f1)
+                    filenames2.remove(f2)
+                    break
+        exclude1 = set(filenames1)
+        exclude2 = set(filenames2)
+        if exclude1:
+            res["sdist-only"][sha] = list(exclude1)
+        if exclude2:
+            res["bdist-only"][sha] = list(exclude2)
+    return res
+
+
+def cal_release_dists_diff(data: dict[str, list[list[str]]]):
+    sdist_files = {}
+    bdist_files = {}
+
+    for name, files in data.items():
+        if name.endswith(".tar.gz") or name.endswith(".zip"):
+            for filename, filesha in files:
+                if filename.rsplit("/", 1)[-1] == "PKG-INFO":
+                    continue
+                # A .tar.gz source distribution (sdist) contains a single top-level directory: https://packaging.python.org/en/latest/specifications/source-distribution-format/#source-distribution-file-format
+                if filename.rsplit("/", 1)[0].endswith(".egg-info"):
+                    continue
+                sdist_files[filesha] = sdist_files.get(filesha, set())
+                sdist_files[filesha].add(filename)
+
+        if name.endswith(".egg"):
+            for filename, filesha in files:
+                if filename.rsplit("/", 1)[0].endswith("EGG-INFO"):
+                    continue
+                bdist_files[filesha] = bdist_files.get(filesha, set())
+                bdist_files[filesha].add(filename)
+
+        if name.endswith(".whl"):
+            for filename, filesha in files:
+                if filename.rsplit("/", 1)[0].endswith(".dist-info"):
+                    continue
+                bdist_files[filesha] = bdist_files.get(filesha, set())
+                bdist_files[filesha].add(filename)
+
+    return comp(sdist_files, bdist_files)
 
 
 def list_release_dist_files(
@@ -81,7 +142,7 @@ def main(data: pd.DataFrame, i: int, dist_folder: str, mirror: Optional[str] = N
         except Exception as e:
             logging.error(f"Error for {name}: {e}")
 
-    with open(f"data/dist_diff-{i}.json", "w") as outf:
+    with open(f"data/release_dist_files-{i}.json", "w") as outf:
         json.dump(res, outf)
 
 
@@ -110,12 +171,23 @@ if __name__ == "__main__":
             delayed(main)(data, i, args.dest, args.mirror)
             for i, data in enumerate(chunk_lst)
         )
+        res = {}
+        for i in range(len(list(chunk_lst))):
+            data = json.load(open(f"data/release_dist_files-{i}.json"))
+            for name, dist_files in data.items():
+                try:
+                    res[name] = cal_release_dists_diff(dist_files)
+                except Exception as e:
+                    logging.error(i, name)
+        with open("data/sampled_dist_diff.json", "w") as f:
+            json.dump(res, f)
     else:
         print(
             f"name: {args.name}, version: {args.version}, dest: {args.dest}, mirror: {args.mirror}"
         )
-        list_release_dist_files(
+        res = list_release_dist_files(
             df[(df["name"] == args.name) & (df["version"] == args.version)],
             args.dest,
             args.mirror,
         )
+        print(cal_release_dists_diff(res))
