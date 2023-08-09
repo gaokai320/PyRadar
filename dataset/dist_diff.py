@@ -118,7 +118,7 @@ def list_release_dist_files(
         success = True
         if not success:
             continue
-        reader = DistReader(save_path)
+        reader = DistReader(save_path, translate_newline=True)
         res[row.filename] = reader.file_shas()
 
     return res
@@ -164,15 +164,18 @@ if __name__ == "__main__":
         print(
             f"dest: {args.dest}, mirror: {args.mirror}, processes: {args.processes}, chunk_size: {args.chunk_size}"
         )
+        import math
+
         from joblib import Parallel, delayed
 
         chunk_lst = chunks(df, args.chunk_size)
+        num_chunks = math.ceil(len(df["name"].unique()) / args.chunk_size)
         Parallel(n_jobs=args.processes, backend="multiprocessing")(
             delayed(main)(data, i, args.dest, args.mirror)
             for i, data in enumerate(chunk_lst)
         )
         res = {}
-        for i in range(len(list(chunk_lst))):
+        for i in range(num_chunks):
             data = json.load(open(f"data/release_dist_files-{i}.json"))
             for name, dist_files in data.items():
                 try:
@@ -181,6 +184,8 @@ if __name__ == "__main__":
                     logging.error(i, name)
         with open("data/sampled_dist_diff.json", "w") as f:
             json.dump(res, f)
+        for i in range(num_chunks):
+            os.remove(f"data/release_dist_files-{i}.json")
     else:
         print(
             f"name: {args.name}, version: {args.version}, dest: {args.dest}, mirror: {args.mirror}"
