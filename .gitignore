@@ -135,3 +135,5 @@ figures/
 # tests/
 
 playground.ipynb
+tokens.json
+config.ini

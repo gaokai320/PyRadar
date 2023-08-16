@@ -40,8 +40,8 @@ class GHRepoSearch:
 
         while True:
             response = requests.get(query_url, headers=self.headers)
-            rate_limit_remaining = response.headers["X-RateLimit-Remaining"]
-            rate_limit_reset = response.headers["X-RateLimit-Reset"]
+            rate_limit_remaining = int(response.headers["X-RateLimit-Remaining"])
+            rate_limit_reset = int(response.headers["X-RateLimit-Reset"])
             cur_ts = int(time.time())
             logger.info(
                 f"Query Url: {query_url}, RateLimit-Remaining: {rate_limit_remaining}, RateLimit-Reset: {rate_limit_reset}, Current Time: {cur_ts}"
