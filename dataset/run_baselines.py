@@ -1,3 +1,4 @@
+import argparse
 import configparser
 import csv
 import logging
@@ -25,9 +26,16 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
 release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
+
+baselines = {
+    "ossgadget": OSSGadget,
+    "warehouse": Warehouse,
+    "librariesio": LibrariesIO,
+    "py2src": Py2Src,
+}
+
 config = configparser.ConfigParser()
 config.read("config.ini")
-
 proxies = None
 if "proxies" in config:
     if "http" in config["proxies"] and "https" in config["proxies"]:
@@ -38,13 +46,6 @@ if "proxies" in config:
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
     "Connection": "close",
-}
-
-baselines = {
-    "ossgadget": OSSGadget,
-    "warehouse": Warehouse,
-    "librariesio": LibrariesIO,
-    "py2src": Py2Src,
 }
 
 
@@ -229,8 +230,6 @@ def dump_to_database():
 
 
 if __name__ == "__main__":
-    import argparse
-
     parser = argparse.ArgumentParser()
     parser.add_argument("--baseline", type=str)
     parser.add_argument("--name", type=str, default=None)
