@@ -1,3 +1,4 @@
+import configparser
 import csv
 import json
 import logging
@@ -10,10 +11,15 @@ from tqdm import tqdm
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-proxies = {
-    "http": "http://127.0.0.1:9980",
-    "https": "http://127.0.0.1:9980",
-}
+config = configparser.ConfigParser()
+config.read("config.ini")
+proxies = None
+if "proxies" in config:
+    if "http" in config["proxies"] and "https" in config["proxies"]:
+        proxies = {
+            "http": config["proxies"]["http"],
+            "https": config["proxies"]["https"],
+        }
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
     "Connection": "close",

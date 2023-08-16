@@ -1,3 +1,4 @@
+import configparser
 import logging
 import math
 import os
@@ -20,7 +21,18 @@ headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
 }
 
-proxies = {"http": "http://162.105.88.97:7890", "https": "http://162.105.88.97:7890"}
+config = configparser.ConfigParser()
+config.read("config.ini")
+proxies = None
+if "proxies" in config:
+    if "http" in config["proxies"] and "https" in config["proxies"]:
+        proxies = {
+            "http": config["proxies"]["http"],
+            "https": config["proxies"]["https"],
+        }
+tokens = []
+if "tokens" in config:
+    tokens = config["tokens"].get("tokens", "").split(",")
 
 
 class GHRepoSearch:
@@ -187,7 +199,6 @@ if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(asctime)s: %(msg)s")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--token", type=str)
     parser.add_argument(
         "--repository", default=False, action=argparse.BooleanOptionalAction
     )
@@ -202,7 +213,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     if args.repository:
-        collect_repo(args.token)
+        collect_repo(tokens[0])
 
     if args.package:
         collect_gh_package(args.n_jobs, args.chunk_size)

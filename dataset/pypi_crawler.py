@@ -1,3 +1,4 @@
+import configparser
 import json
 import logging
 import os
@@ -25,7 +26,15 @@ def safe_open(path):
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36"
 }
-proxies = {"http": "http://127.0.0.1:9980", "https": "http://127.0.0.1:9980"}
+config = configparser.ConfigParser()
+config.read("config.ini")
+proxies = None
+if "proxies" in config:
+    if "http" in config["proxies"] and "https" in config["proxies"]:
+        proxies = {
+            "http": config["proxies"]["http"],
+            "https": config["proxies"]["https"],
+        }
 
 
 def _single_get(url: str, headers: dict, timeout: int = 5):
