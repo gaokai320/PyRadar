@@ -1,17 +1,12 @@
-import csv
 import logging
 from collections import OrderedDict
 from typing import Optional
 from urllib.parse import urlparse
 
-from pymongo import MongoClient
-from tqdm import tqdm
+from baselines.utils import GITHUB_RESERVED_NAMES
 
-from baselines.utils import GITHUB_RESERVED_NAMES, configure_logger
-
-logger = configure_logger("warehouse", "log/warehouse.log", logging.DEBUG)
-
-release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
 
 
 class Warehouse:
@@ -81,33 +76,3 @@ class Warehouse:
                     repo_name = repo_name.removesuffix(".git")
                 return f"https://github.com/{user_name}/{repo_name}".lower()
         return None
-
-
-if __name__ == "__main__":
-    with open("data/Warehouse.csv", "w") as f:
-        writer = csv.writer(f)
-        writer.writerow(["name", "version", "Warehouse"])
-        for metadata in tqdm(
-            release_metadata.find(
-                {},
-                projection={
-                    "_id": 0,
-                    "name": 1,
-                    "version": 1,
-                    "home_page": 1,
-                    "download_url": 1,
-                    "project_urls": 1,
-                },
-            )
-        ):
-            try:
-                name = metadata["name"]
-                version = metadata["version"]
-                repo_url = Warehouse.parse_metadata(metadata)
-                if repo_url:
-                    writer.writerow([name, version, repo_url.lower()])
-                else:
-                    writer.writerow([name, version, None])
-            except Exception as e:
-                logger.error(f"{name}, {version}, {e}")
-                break

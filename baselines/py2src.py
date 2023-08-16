@@ -1,10 +1,9 @@
-import csv
 import logging
 import os
 from collections import Counter
 from email.message import EmailMessage
 from functools import lru_cache
-from typing import Generator, Optional, TypeVar
+from typing import Optional
 from urllib.parse import urlparse
 
 import readme_renderer.markdown
@@ -14,18 +13,11 @@ import requests
 import urllib3
 import validators
 from bs4 import BeautifulSoup
-from pymongo import MongoClient
-from pyparsing import Iterable
-from tqdm import tqdm
-from urllib3.util import Retry
 
 from baselines.ossgadget import OSSGadget
-from baselines.utils import configure_logger
 from baselines.warehouse import Warehouse
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-# logger = configure_logger("py2src", "log/py2src.log", logging.DEBUG)
-release_metadata = MongoClient("127.0.0.1", 27017)["radar"]["release_metadata"]
 
 _RENDERERS = {
     None: readme_renderer.rst,  # Default if description_content_type is None
@@ -75,6 +67,8 @@ class Py2Src:
         metadata: dict[str, Optional[str | dict[str, str]]], session=None, logger=None
     ) -> list[str]:
         """Code adapted from `get_final_url` method in [GetFinalURL](https://github.com/simonepirocca/py2src/blob/master/src/get_github_url.py#L10) class."""
+        if not metadata:
+            return
         ossgadget_url = URLFinder.find_ossgadget_url(metadata, session, logger)
         badge_url = URLFinder.find_github_url_from_pypi_badge(metadata, session, logger)
         homepage_url = URLFinder.mode_2(metadata, session, logger)
@@ -101,7 +95,8 @@ def safe_get(url: str, session=None, logger=None) -> Optional[requests.Response]
     if not session:
         session = requests.Session()
     if not logger:
-        logger = configure_logger("py2src", "log/py2src.log", logging.DEBUG)
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
     try:
         response = session.get(url)
         response.raise_for_status()
@@ -381,124 +376,3 @@ class URLFinder:
     ) -> Optional[str]:
         """reimplementation of `find_github_url_from_pypi_statistics` method in [src/url_finder.py](https://github.com/simonepirocca/py2src/blob/master/src/url_finder.py#L369). Since the GitHub statistics section is based on the GitHub repository URL retrieved by warehouse. So I just call the reimplemented Warehouse class."""
         return Warehouse.parse_metadata(metadata)
-
-
-T = TypeVar("T")
-
-
-def chunks(lst: Iterable[T], n: int) -> Generator[list[T], None, None]:
-    lst = lst[::-1]
-    """Yield successive n-sized chunks from lst."""
-    for i in range(0, len(lst), n):
-        yield lst[i : i + n]
-
-
-def main(names: list[str], i: int, token: str = None):
-    logger = configure_logger(f"py2src-{i}", f"log/py2src-{i}.log", logging.DEBUG)
-    with open(f"data/py2src-{i}.csv", "w") as f:
-        pass
-
-    # session = requests.Session()
-
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/79.0.3945.88 Safari/537.36",
-        "Connection": "close",
-    }
-    if token:
-        headers["Authorization"] = f"Bearer {token}"
-    proxies = {
-        "http": "http://162.105.88.97:7890",
-        "https": "http://162.105.88.97:7890",
-    }
-
-    session = requests.Session()
-    session.headers.update(headers)
-    session.verify = False
-    session.proxies = proxies
-    with open(f"data/py2src-{i}.csv", "a") as f:
-        writer = csv.writer(f)
-        for name in tqdm(names):
-            for metadata in release_metadata.find(
-                {"name": name},
-                projection={
-                    "_id": 0,
-                    "name": 1,
-                    "version": 1,
-                    "home_page": 1,
-                    "download_url": 1,
-                    "project_urls": 1,
-                    "description": 1,
-                    "description_content_type": 1,
-                },
-            ):
-                name = metadata["name"]
-                version = metadata["version"]
-                logger.info(f"Start {name}, {version}")
-                try:
-                    proposed_urls = Py2Src.parse_metadata(metadata, session, logger)
-                    tmp = [_ for _ in proposed_urls if _]
-                    mode_url = Counter(tmp).most_common(1)[0][0] if tmp else None
-                    line = [name, version]
-                    line.extend(proposed_urls)
-                    line.append(mode_url)
-                    writer.writerow(line)
-                    f.flush()
-                except Exception as e:
-                    logger.error(f"Exception: {name}, {version}, {e}")
-
-                logger.info(f"Finish {name}, {version}")
-    session.close()
-
-
-def error_names():
-    res = []
-    prev = None
-    for i in range(300):
-        with open(f"log/py2src-{i}.log") as f:
-            for line in f:
-                msg = line.strip("\n").split(" - ")[-1]
-                if msg.startswith("Start ") or msg.startswith("Exception "):
-                    prev = msg.split(" ", 1)[1].split(", ")[0]
-                elif msg.startswith("Http Error: "):
-                    error_no = msg.split(" ")[2]
-                    if error_no != "404":
-                        res.append(prev)
-                elif (
-                    msg.startswith("Error Connecting: ")
-                    or msg.startswith("Timeout Error: ")
-                    or msg.startswith("OOps, Something Else: ")
-                ):
-                    res.append(prev)
-    return list(set(res))
-
-
-def unvisited():
-    visited = []
-    for i in range(0, 300):
-        with open(f"data/py2src{i}.csv") as f:
-            for line in f:
-                name, version = line.split(",")[:2]
-                visited.append((name, version))
-
-    all_names = []
-    for metadata in release_metadata.find({}, {"_id": 0, "name": 1, "version": 1}):
-        name = metadata["name"]
-        version = metadata["version"]
-        all_names.append((name, version))
-
-    tmp = set(all_names) - set(visited)
-    return list(set([n for n, _ in tmp]))
-
-
-if __name__ == "__main__":
-    # from multiprocessing import Pool
-    # p = Pool(20)
-    from joblib import Parallel, delayed
-
-    names = release_metadata.find({}).distinct("name")
-    # names = list(set(unvisited() + error_names()))
-    print(f"{len(names)} packages to be processed")
-    chunk_lst = chunks(names, len(names) // 10 + 1)
-    Parallel(n_jobs=10, backend="multiprocessing")(
-        delayed(main)(task, i % 10) for i, task in enumerate(chunk_lst)
-    )
