@@ -6,6 +6,7 @@ import os
 import random
 import re
 import time
+import urllib.request
 from calendar import monthrange
 from typing import Optional
 
@@ -15,6 +16,7 @@ from bs4 import BeautifulSoup
 from joblib import Parallel, delayed
 from packaging.utils import canonicalize_name
 from packaging.version import Version
+from pymongo import MongoClient
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,7 @@ pattern = re.compile(r"^([A-Z0-9]|[A-Z0-9][A-Z0-9._-]*[A-Z0-9])$", flags=re.IGNO
 headers = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/110.0.0.0 Safari/537.36",
 }
+col = MongoClient("127.0.0.1", 27017)["radar"]["distribution_file_info"]
 
 config = configparser.ConfigParser()
 config.read("config.ini")
@@ -270,7 +273,15 @@ def normalize_url(url: str):
     return url
 
 
-def positive_data():
+def gather_dist_filename(x):
+    name, version = x["name"], x["version"]
+    res = []
+    for data in col.find({"name": name, "version": version, "packagetype": "sdist"}):
+        res.append(data["filename"])
+    return res
+
+
+def build_positive_dataset():
     if not os.path.exists("data/gh_package.json"):
         print("data/gh_package.json not exists, please run --package first")
         return
@@ -374,15 +385,16 @@ def positive_data():
         ].index,
         inplace=True,
     )
+    sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
     print(f"{len(sample_releases)} records in positive_dataset.csv")
 
     sample_releases.to_csv("data/positive_dataset_sample.csv", index=False)
 
 
-def negative_data():
+def build_negative_dataset():
     if not os.path.exists("data/positive_dataset_all.csv"):
         print(
-            "data/positive_dataset_all.csv not exists, please generate positive data first with `positive_data` function"
+            "data/positive_dataset_all.csv not exists, please generate positive data first with `build_positive_data` function"
         )
         return
 
@@ -479,13 +491,86 @@ def negative_data():
     sample_releases = (
         negative_releases.groupby(["name", "url"]).apply(select_version).reset_index()
     )
+    sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
     print(len(sample_releases), "releases in the sample dataset")
     sample_releases.to_csv("data/negative_dataset_sample.csv", index=False)
 
 
-def build_dataset():
-    positive_data()
-    negative_data()
+def download(
+    url: str,
+    save_path: str,
+    check: bool = True,
+    max_try=3,
+) -> bool:
+    if check and os.path.exists(save_path):
+        return True
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    success = False
+    i = 0
+
+    while (not success) and (i < max_try):
+        try:
+            urllib.request.urlretrieve(url, save_path)
+            success = True
+        except Exception as e:
+            i += 1
+            logger.error(f"Error downloading {url}, retry {i}: {e}")
+
+    return success
+
+
+def df_chunks(df: pd.DataFrame, chunk_size: int):
+    names = list(df["name"].unique())
+    for i in range(0, len(names), chunk_size):
+        yield df[df["name"].isin(names[i : i + chunk_size])]
+
+
+def download_main(
+    data: pd.DataFrame,
+    dist_folder: str,
+    mirror: Optional[str] = None,
+    check: bool = True,
+):
+    data = data.copy()
+    if mirror:
+        data.loc[:, "url"] = data["url"].apply(
+            lambda x: os.path.join(mirror, "/".join(x.rsplit("/", 4)[1:]))
+        )
+
+    for row in data.itertuples(index=False):
+        try:
+            name, filename, url = row.name, row.filename, row.url
+            save_path = os.path.join(dist_folder, name, filename)
+            download(url, save_path, check=check)
+        except Exception as e:
+            logger.error(f"{name} {url} error: {e}")
+
+
+def download_dists(
+    n_jobs: int, chunk_size: int, dist_folder: str, mirror: Optional[str] = None
+):
+    positive_sample = pd.read_csv("data/positive_dataset_sample.csv")
+    negative_sample = pd.read_csv("data/negative_dataset_sample.csv")
+    samples = pd.concat(
+        [positive_sample[["name", "version"]], negative_sample[["name", "version"]]],
+        ignore_index=True,
+    )
+    dist_file_info = pd.DataFrame(
+        col.find({"packagetype": "sdist"}, projection={"_id": 0})
+    )
+    samples = samples.merge(dist_file_info[["name", "version", "filename", "url"]])
+    print(
+        f"{len(samples)} distribution files, {len(samples['name'].unique())} unique packages"
+    )
+
+    chunk_lst = df_chunks(samples, chunk_size)
+    num_chunks = math.ceil(len(samples["name"].unique()) / args.chunk_size)
+    print(f"{n_jobs} processes, {chunk_size} packages per chunk, {num_chunks} chunks")
+
+    Parallel(n_jobs=n_jobs, backend="multiprocessing")(
+        delayed(download_main)(data, dist_folder, mirror) for data in chunk_lst
+    )
 
 
 if __name__ == "__main__":
@@ -507,6 +592,11 @@ if __name__ == "__main__":
     parser.add_argument(
         "--maintainer", default=False, action=argparse.BooleanOptionalAction
     )
+    parser.add_argument(
+        "--download", default=False, action=argparse.BooleanOptionalAction
+    )
+    parser.add_argument("--dest", type=str)
+    parser.add_argument("--mirror", default=None, type=str)
     parser.add_argument("--n_jobs", type=int, default=1)
     parser.add_argument("--chunk_size", type=int, default=100)
     args = parser.parse_args()
@@ -521,4 +611,8 @@ if __name__ == "__main__":
         collect_pypi_maintainers(args.n_jobs, args.chunk_size)
 
     if args.dataset:
-        build_dataset()
+        build_positive_dataset()
+        build_negative_dataset()
+
+    if download:
+        download_dists(args.n_jobs, args.chunk_size, args.dest, args.mirror)
