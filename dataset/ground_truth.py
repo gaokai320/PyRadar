@@ -463,7 +463,7 @@ def negative_data():
     # select the url of the latest version' url
     def select_version(x):
         versions = []
-        for v in x:
+        for v in x["version"]:
             try:
                 Version(v)
                 versions.append(v)
