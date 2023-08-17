@@ -1,4 +1,5 @@
 import configparser
+import json
 import logging
 import math
 import os
@@ -8,9 +9,13 @@ import time
 from calendar import monthrange
 from typing import Optional
 
+import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 from joblib import Parallel, delayed
+from packaging.utils import canonicalize_name
+from packaging.version import Version
+from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -136,6 +141,27 @@ def get_packages(
     return list(set(packages))
 
 
+def get_maintainers(name: str, session=None) -> Optional[list[str]]:
+    maintainers = []
+    if not session:
+        session = requests.Session()
+        session.headers.update(headers)
+        session.headers.update({"Connection": "close"})
+        session.proxies = proxies
+
+    r = session.get(f"https://pypi.org/project/{name}", timeout=10)
+    if r.status_code == 404:
+        return maintainers
+
+    soup = BeautifulSoup(r.content, "html.parser")
+
+    for span in soup.find_all("span", {"class": "sidebar-section__user-gravatar-text"}):
+        name = span.text.strip("\n ")
+        maintainers.append(name)
+
+    return list(set(maintainers))
+
+
 def main(repo_urls: list[str], i: int):
     session = requests.Session()
     session.headers.update(headers)
@@ -150,6 +176,23 @@ def main(repo_urls: list[str], i: int):
         finally:
             time.sleep(random.randint(5, 10))
     with open(f"data/gh_package-{i}.json", "w") as f:
+        json.dump(res, f)
+
+
+def maintainer_main(names: list[str], i: int):
+    session = requests.Session()
+    session.headers.update(headers)
+    session.headers.update({"Connection": "close"})
+    session.proxies = proxies
+    res = {}
+    for name in names:
+        try:
+            res[name] = get_maintainers(name, session)
+        except Exception as e:
+            logger.error(f"{name} error: {e}")
+        finally:
+            time.sleep(random.randint(5, 10))
+    with open(f"data/pypi_maintainers-{i}.json", "w") as f:
         json.dump(res, f)
 
 
@@ -169,7 +212,7 @@ def collect_gh_package(n_jobs: int, chunk_size: int):
     all_repo_urls = json.load(open("data/gh_repos.json"))
     left_repo_urls = list(set(all_repo_urls) - set(res.keys()))
     print(
-        f"{len(left_repo_urls)} repositories, {n_jobs} processes, {chunk_size} repositorier per chunk"
+        f"{len(left_repo_urls)} repositories, {n_jobs} processes, {chunk_size} repositories per chunk"
     )
     chunk = chunks(left_repo_urls, chunk_size)
     num_chunk = math.ceil(len(left_repo_urls) / chunk_size)
@@ -186,10 +229,263 @@ def collect_gh_package(n_jobs: int, chunk_size: int):
         json.dump(res, f)
 
 
-def build_dataset():
+def collect_pypi_maintainers(n_jobs: int, chunk_size: int):
+    if not os.path.exists("data/package_names.json"):
+        names = list(
+            pd.read_csv(
+                "data/metadata_retriever.csv", low_memory=False, keep_default_na=False
+            )["name"].unique()
+        )
+        with open("data/package_names.json", "w") as f:
+            json.dump(names, f)
+    else:
+        names = json.load(open("data/package_names.json"))
+
+    res = {}
+    if os.path.exists("data/pypi_maintainers.json"):
+        res = json.load(open("data/pypi_maintainers.json"))
+    left_pkgs = list(set(names) - set(res.keys()))
+    print(
+        f"{len(left_pkgs)} packages, {n_jobs} processes, {chunk_size} packages per chunk"
+    )
+    chunk = chunks(left_pkgs, chunk_size)
+    num_chunk = math.ceil(len(left_pkgs) / chunk_size)
+
+    Parallel(n_jobs=n_jobs, backend="multiprocessing")(
+        delayed(maintainer_main)(names, i) for i, names in enumerate(chunk)
+    )
+
+    for i in range(num_chunk):
+        for k, v in json.load(open(f"data/pypi_maintainers-{i}.json")).items():
+            res[k] = v
+        os.remove(f"data/pypi_maintainers-{i}.json")
+    with open("data/pypi_maintainers.json", "w") as f:
+        json.dump(res, f)
+
+
+def normalize_url(url: str):
+    url = url.lower().strip("/")
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url
+
+
+def positive_data():
     if not os.path.exists("data/gh_package.json"):
         print("data/gh_package.json not exists, please run --package first")
         return
+
+    df = pd.read_csv(
+        "data/metadata_retriever.csv", low_memory=False, keep_default_na=False
+    )
+    downloads = pd.read_csv("data/downloads.csv")
+
+    df = pd.read_csv(
+        "data/metadata_retriever.csv", low_memory=False, keep_default_na=False
+    )
+    downloads = pd.read_csv("data/downloads.csv")
+
+    gh_pkgs = {}
+    for k, v in json.load(open("data/gh_package.json")).items():
+        for name in v:
+            name = canonicalize_name(name)
+            if name == "example":
+                continue
+            # sshuttle move its repository from https://github.com/apenwarr/sshuttle to https://github.com/sshuttle/sshuttle
+            if name == "sshuttle" and k == "https://github.com/apenwarr/sshuttle":
+                continue
+            gh_pkgs[name] = gh_pkgs.get(name, set())
+            gh_pkgs[name].add(normalize_url(k))
+    gh_pkgs = {k: list(v)[0] for k, v in gh_pkgs.items()}
+    gh_pkgs = pd.DataFrame(gh_pkgs.items(), columns=["name", "url"])
+    # only consider github packages that also exist in pypi and have the same url found by metadata retriever
+    gh_pkgs = gh_pkgs.merge(
+        df[["name", "version", "redirected"]].rename(columns={"redirected": "url"}),
+        on=["name", "url"],
+    )
+    print(
+        f"GitHub source: {len(gh_pkgs['name'].unique())} packages, {len(gh_pkgs)} releases"
+    )
+
+    top4000_pkgs = df[
+        df["name"].isin(downloads.head(4000)["name"]) & (df["redirected"] != "")
+    ][["name", "version", "redirected"]]
+    top4000_pkgs.rename(columns={"redirected": "url"}, inplace=True)
+    print(
+        f"Top 4000 PyPI packages: {len(top4000_pkgs['name'].unique())} packages, {len(top4000_pkgs)} releases"
+    )
+
+    res = gh_pkgs.merge(top4000_pkgs, how="outer", indicator=True)
+    res["github"] = res["_merge"].apply(
+        lambda x: True if x in ["left_only", "both"] else False
+    )
+    res["top4000"] = res["_merge"].apply(
+        lambda x: True if x in ["right_only", "both"] else False
+    )
+    res.drop(columns=["_merge"], inplace=True)
+
+    # insert sampleproject packages.
+    if res[res["name"] == "sampleproject"].empty:
+        sample_project_df = df[
+            (df["name"] == "sampleproject") & (df["redirected"] != "")
+        ][["name", "version", "redirected"]].copy()
+        sample_project_df.rename(columns={"redirected": "url"}, inplace=True)
+        sample_project_df["github"] = False
+        sample_project_df["top4000"] = False
+        print(
+            f"sampleproject has {len(sample_project_df)} releases with repository url"
+        )
+        res = pd.concat([res, sample_project_df], ignore_index=True)
+    res.drop(
+        res[
+            (res["url"] == "https://github.com/pypa/sampleproject")
+            & (res["name"] != "sampleproject")
+        ].index,
+        inplace=True,
+    )
+    print(f"Total: {len(res['name'].unique())} packages, {len(res)} releases")
+    res.to_csv("data/positive_dataset_all.csv", index=False)
+
+    # select the url of the latest version' url
+    def select_version(x):
+        versions = []
+        for row in x.itertuples(index=False):
+            try:
+                Version(row.version)
+                versions.append((row.version, row.github, row.top4000))
+            except:
+                pass
+        if versions:
+            versions.sort(key=lambda x: Version(x[0]))
+        else:
+            versions = [
+                (row.version, row.github, row.top4000)
+                for row in x.itertuples(index=False)
+            ]
+            versions.sort(key=lambda x: x[0])
+        version, github, top4000 = versions[-1]
+        return pd.Series({"version": version, "github": github, "top4000": top4000})
+
+    sample_releases = res.groupby(["name", "url"]).apply(select_version).reset_index()
+    sample_releases.drop(
+        sample_releases[
+            (sample_releases["url"] == "https://github.com/pypa/sampleproject")
+            & (sample_releases["name"] != "sampleproject")
+        ].index,
+        inplace=True,
+    )
+    print(f"{len(sample_releases)} records in positive_dataset.csv")
+
+    sample_releases.to_csv("data/positive_dataset_sample.csv", index=False)
+
+
+def negative_data():
+    if not os.path.exists("data/positive_dataset_all.csv"):
+        print(
+            "data/positive_dataset_all.csv not exists, please generate positive data first with `positive_data` function"
+        )
+        return
+
+    df = pd.read_csv(
+        "data/metadata_retriever.csv", low_memory=False, keep_default_na=False
+    )
+    positive_data_all = pd.read_csv("data/positive_dataset_all.csv")
+    pkg_maintainers = json.load(open("data/pypi_maintainers.json"))
+
+    # select releases whose repository url the same as positive datasets
+    candidate_releases = df[df["redirected"].isin(positive_data_all["url"])][
+        ["name", "version", "redirected"]
+    ].rename(columns={"redirected": "url"})
+    candidate_releases = candidate_releases.merge(
+        positive_data_all[["name", "version", "url"]], how="left", indicator=True
+    )
+    candidate_releases = candidate_releases[
+        candidate_releases["_merge"] == "left_only"
+    ].drop(columns=["_merge"])
+    print(
+        len(candidate_releases),
+        "candidate releases",
+        len(candidate_releases["name"].unique()),
+        "candidate packages",
+    )
+
+    # select candidate packages whose PyPI maintainers different with positive datasets.
+    candidate_pkgs = (
+        candidate_releases[["name", "url"]]
+        .drop_duplicates()
+        .merge(
+            positive_data_all[["name", "url"]].drop_duplicates(),
+            how="left",
+            on="url",
+            suffixes=["_candidate", "_true"],
+        )
+    )
+    candidate_pkgs["negative"] = candidate_pkgs[["name_candidate", "name_true"]].apply(
+        lambda x: not bool(
+            set(pkg_maintainers[x["name_candidate"]]).intersection(
+                set(pkg_maintainers[x["name_true"]])
+            )
+        ),
+        axis=1,
+    )
+    candidate_pkgs = (
+        candidate_pkgs.groupby(["name_candidate", "url"])["negative"]
+        .apply(lambda x: any(x))
+        .to_frame()
+        .reset_index()
+    )
+    # if a packages have both True and False value, we choose True to ensure that packages in the dataset are negative.
+    # e.g., tf-nightly-cpu has the same repository with tensorflow but with different pypi maintainers
+    # tf-nightly-cpu also has the same repository with tf-nightly and with the same pypi maintainers.
+    # in this case, we consider tf-nightly-cpu's repository information is correct, which inline with the truth.
+    negative_pkgs = candidate_pkgs[candidate_pkgs["negative"]][
+        ["name_candidate", "url"]
+    ].rename(columns={"name_candidate": "name"})
+
+    negative_releases = negative_pkgs.merge(candidate_releases)
+    print(
+        len(negative_pkgs),
+        "negative packages",
+        len(negative_releases),
+        "negative releases",
+    )
+    print(
+        len(
+            negative_pkgs[
+                negative_pkgs["url"] == "https://github.com/pypa/sampleproject"
+            ]["name"].unique()
+        ),
+        "packages' code repository is https://github.com/pypa/sampleproject",
+    )
+
+    negative_releases.to_csv("data/negative_dataset_full.csv", index=False)
+
+    # select the url of the latest version' url
+    def select_version(x):
+        versions = []
+        for v in x:
+            try:
+                Version(v)
+                versions.append(v)
+            except:
+                pass
+        if versions:
+            versions.sort(key=lambda x: Version(x))
+        else:
+            versions = [v for v in x]
+            versions.sort(key=lambda x: x)
+        return pd.Series({"version": versions[-1]})
+
+    sample_releases = (
+        negative_releases.groupby(["name", "url"]).apply(select_version).reset_index()
+    )
+    print(len(sample_releases), "releases in the sample dataset")
+    sample_releases.to_csv("data/negative_dataset_sample.csv", index=False)
+
+
+def build_dataset():
+    positive_data()
+    negative_data()
 
 
 if __name__ == "__main__":
@@ -208,6 +504,9 @@ if __name__ == "__main__":
     parser.add_argument(
         "--dataset", default=False, action=argparse.BooleanOptionalAction
     )
+    parser.add_argument(
+        "--maintainer", default=False, action=argparse.BooleanOptionalAction
+    )
     parser.add_argument("--n_jobs", type=int, default=1)
     parser.add_argument("--chunk_size", type=int, default=100)
     args = parser.parse_args()
@@ -217,6 +516,9 @@ if __name__ == "__main__":
 
     if args.package:
         collect_gh_package(args.n_jobs, args.chunk_size)
+
+    if args.maintainer:
+        collect_pypi_maintainers(args.n_jobs, args.chunk_size)
 
     if args.dataset:
         build_dataset()
