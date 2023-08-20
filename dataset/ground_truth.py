@@ -432,17 +432,40 @@ def build_negative_dataset():
             suffixes=["_candidate", "_true"],
         )
     )
+
+    def judge_negative(x):
+        m1 = pkg_maintainers[x["name_candidate"]]
+        m2 = pkg_maintainers[x["name_true"]]
+        # exception: pycopy-lib and micropython-lib are the same project
+        if "pycopy-lib" in m1 and "micropython-lib" in m2:
+            return False
+        # exception: twitter-archive packages
+        if "twitter" in m1:
+            return False
+
+        # exception: apache-airflow-backport-providers packages
+        if (
+            x["name_candidate"].startswith("apache-airflow-backport-providers")
+            and "potiuk" in m1
+        ):
+            return False
+
+        # exception: tf-nightly and tensorflow packages.
+        if x["name_candidate"].startswith(("tf-nightly", "tensorflow-", "intel-")):
+            return False
+
+        # eception: microsoft maintainer:
+        if "microsoft" in m1:
+            return False
+
+        return not bool(set(m1).intersection(set(m2)))
+
     candidate_pkgs["negative"] = candidate_pkgs[["name_candidate", "name_true"]].apply(
-        lambda x: not bool(
-            set(pkg_maintainers[x["name_candidate"]]).intersection(
-                set(pkg_maintainers[x["name_true"]])
-            )
-        ),
-        axis=1,
+        judge_negative, axis=1
     )
     candidate_pkgs = (
         candidate_pkgs.groupby(["name_candidate", "url"])["negative"]
-        .apply(lambda x: any(x))
+        .apply(lambda x: all(x))
         .to_frame()
         .reset_index()
     )
