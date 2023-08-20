@@ -252,7 +252,7 @@ class MetadataRetriever:
                 repo = url.rsplit("/", 1)[-1]
                 sub_name = sub_pattern.sub("", name)
                 sub_repo = sub_pattern.sub("", repo)
-                if (sub_name in sub_repo) or (sub_repo in sub_name):
+                if sub_name == sub_repo:
                     return url
 
     @staticmethod
@@ -288,5 +288,5 @@ class MetadataRetriever:
                 repo = url.rsplit("/", 1)[-1]
                 sub_name = sub_pattern.sub("", name)
                 sub_repo = sub_pattern.sub("", repo)
-                if (sub_name in sub_repo) or (sub_repo in sub_name):
+                if sub_name == sub_repo:
                     return url

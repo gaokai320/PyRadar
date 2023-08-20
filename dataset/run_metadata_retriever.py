@@ -111,7 +111,7 @@ def run_search_webpage(n_jobs: int, chunk_size: int):
         df = pd.read_csv(
             "data/metadata_retriever.csv", low_memory=False, keep_default_na=False
         )
-        left_df = df[df["metadata_retriever"] != ""].copy()
+        left_df = df[df["metadata_retriever"] == ""].copy()
 
         left_df.loc[:, "urls"] = left_df[["name", "version"]].progress_apply(
             lambda x: MetadataRetriever.select_homepage_doc_url(
@@ -170,7 +170,7 @@ def merge():
                 repo = repo_url.rsplit("/", 1)[-1]
                 sub_name = sub_pattern.sub("", name)
                 sub_repo = sub_pattern.sub("", repo)
-                if (sub_name in sub_repo) or (sub_repo in sub_name):
+                if sub_name == sub_repo:
                     hit = True
                     res.append([name, version, repo_url])
                     break
@@ -234,10 +234,10 @@ def redirection(n_jobs: int, chunk_size: int, tokens: list[str] = []):
     print(f"{len(unique_urls)} unique urls, {len(left_urls)} urls remains")
 
     github_urls = [url for url in left_urls if url.split("/")[2] == "github.com"]
-    chunk = chunks(github_urls, 1000)
-    num_chunk1 = math.ceil(len(github_urls) / 1000)
+    chunk = chunks(github_urls, chunk_size)
+    num_chunk1 = math.ceil(len(github_urls) / chunk_size)
     print(
-        f"{len(github_urls)} GitHub urls, {len(tokens)} GitHub tokens, 1000 urls per batch, {num_chunk1} batches"
+        f"{len(github_urls)} GitHub urls, {len(tokens)} GitHub tokens, {chunk_size} urls per batch, {num_chunk1} batches"
     )
     Parallel(n_jobs=len(tokens), backend="multiprocessing")(
         delayed(github_redirect_main)(urls, tokens[i % len(tokens)], i)
@@ -293,6 +293,8 @@ if __name__ == "__main__":
     parser.add_argument("--n_jobs", type=int, default=1)
     parser.add_argument("--chunk_size", type=int, default=100)
     args = parser.parse_args()
+    print(f"proxies: {proxies}")
+    print(f"tokens: {tokens}")
 
     if args.name:
         metadata = release_metadata.find_one(
@@ -334,7 +336,7 @@ if __name__ == "__main__":
                 name = metadata["name"]
                 version = metadata["version"]
                 repo_url = MetadataRetriever.parse_metadata(
-                    metadata, webpage=args.webpage, redirect=args.redirect
+                    metadata, webpage=False, redirect=False
                 )
                 writer.writerow([name, version, repo_url])
 

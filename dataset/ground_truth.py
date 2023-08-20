@@ -614,5 +614,5 @@ if __name__ == "__main__":
         build_positive_dataset()
         build_negative_dataset()
 
-    if download:
+    if args.download:
         download_dists(args.n_jobs, args.chunk_size, args.dest, args.mirror)
