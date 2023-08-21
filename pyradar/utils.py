@@ -6,11 +6,10 @@ import zipfile
 from collections import OrderedDict
 from typing import Optional, Union
 
+logger = logging.getLogger(__name__)
 
-def calculate_sha(
-    content: Union[bytes, str], logger: logging.Logger = None
-) -> Optional[str]:
-    logger = logger or logging.getLogger(__name__)
+
+def calculate_sha(content: Union[bytes, str]) -> Optional[str]:
     if isinstance(content, str):
         content = content.encode()
     if not isinstance(content, bytes):
@@ -64,12 +63,10 @@ class ZipReader:
         self,
         file_path: str,
         translate_newline: bool = False,
-        logger: logging.Logger = None,
     ) -> None:
         self.file_path = file_path
         self.translate_newline = translate_newline
         self.file = zipfile.ZipFile(self.file_path)
-        self.logger = logger or logging.getLogger(__name__)
 
     @property
     def top_level_modules(self):
@@ -120,7 +117,7 @@ class ZipReader:
                 continue
 
             content = self.get_file_content(name)
-            res.append((name, calculate_sha(content, self.logger)))
+            res.append((name, calculate_sha(content)))
         return res
 
     def get_file_content(self, filename: str) -> str:
@@ -134,26 +131,24 @@ class ZipReader:
 
 
 class TarReader:
-    def __init__(
-        self,
-        file_path: str,
-        translate_newline: bool = False,
-        logger: logging.Logger = None,
-    ) -> None:
+    def __init__(self, file_path: str, translate_newline: bool = False) -> None:
         self.file_path = file_path
         self.translate_newline = translate_newline
         self.file = tarfile.open(self.file_path)
-        self.logger = logger or logging.getLogger(__name__)
 
     def file_shas(self) -> list[tuple[str, str]]:
         res = []
         for member in self.file.getmembers():
             if member.isreg():
+                if member.name.rsplit("/", 1)[-1] == "PKG-INFO":
+                    continue
+                if member.name.rsplit("/", 1)[0].endswith(".egg-info"):
+                    continue
                 content = self.get_file_content(member)
                 res.append(
                     (
                         member.name,
-                        calculate_sha(content, self.logger),
+                        calculate_sha(content),
                     )
                 )
         return res
@@ -169,16 +164,11 @@ class TarReader:
 
 
 class DistReader:
-    def __init__(
-        self,
-        file_path: str,
-        translate_newline: bool = False,
-        logger: logging.Logger = None,
-    ) -> None:
+    def __init__(self, file_path: str, translate_newline: bool = False) -> None:
         if file_path.endswith(".tar.gz"):
-            self.reader = TarReader(file_path, translate_newline, logger)
+            self.reader = TarReader(file_path, translate_newline)
         elif any(file_path.endswith(suffix) for suffix in [".zip", ".whl", ".egg"]):
-            self.reader = ZipReader(file_path, translate_newline, logger)
+            self.reader = ZipReader(file_path, translate_newline)
 
     def file_shas(self) -> list[tuple[str, str]]:
         return self.reader.file_shas()

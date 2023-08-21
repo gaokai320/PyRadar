@@ -385,7 +385,7 @@ def build_positive_dataset():
         ].index,
         inplace=True,
     )
-    sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
+    # sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
     print(f"{len(sample_releases)} records in positive_dataset.csv")
 
     sample_releases.to_csv("data/positive_dataset_sample.csv", index=False)
@@ -514,7 +514,7 @@ def build_negative_dataset():
     sample_releases = (
         negative_releases.groupby(["name", "url"]).apply(select_version).reset_index()
     )
-    sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
+    # sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
     print(len(sample_releases), "releases in the sample dataset")
     sample_releases.to_csv("data/negative_dataset_sample.csv", index=False)
 

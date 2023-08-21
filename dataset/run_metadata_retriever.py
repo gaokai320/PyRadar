@@ -182,7 +182,7 @@ def merge():
     df = pd.read_csv(
         "data/metadata_retriever.csv", low_memory=False, keep_default_na=False
     )
-    pd.concat([df[df["metadata_retriever"].notna()], res]).drop_duplicates().to_csv(
+    pd.concat([df[df["metadata_retriever"] != ""], res]).drop_duplicates().to_csv(
         "data/metadata_retriever.csv", index=False
     )
 
