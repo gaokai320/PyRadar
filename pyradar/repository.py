@@ -161,13 +161,9 @@ class Repository:
         return commits
 
     @cached_property
-    def tag_shas(self) -> dict[str, str]:
-        """a dict of tag object names (e.g., v0.1.0) with the commit shas they point to"""
-        res = {}
-        if self.repo:
-            for tag in self.repo.tags:
-                res[tag.name] = tag.commit.hexsha
-        return res
+    def tag_shas(self) -> list[str]:
+        """a list of tag object names (e.g., v0.1.0) with the commit shas they point to"""
+        return [tag.name for tag in self.repo.tags]
 
     @staticmethod
     def parse_gitmodules(content: str, base_url: str) -> dict[str, str]:

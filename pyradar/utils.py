@@ -1,4 +1,6 @@
+import csv
 import hashlib
+import json
 import logging
 import os
 import tarfile
@@ -7,6 +9,25 @@ from collections import OrderedDict
 from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+def get_downloads_data():
+    downloads = {}
+    with open("data/downloads.csv") as f:
+        reader = csv.reader(f)
+        next(reader, None)
+        for entries in reader:
+            downloads[entries[0]] = int(entries[1])
+    return downloads
+
+
+def get_maintainer_info():
+    maintainer_info = {}
+    for pkg, maintainers in json.load(open("data/pypi_maintainers.json")).items():
+        for maintainer in maintainers:
+            maintainer_info[maintainer] = maintainer_info.get(maintainer, [])
+            maintainer_info[maintainer].append(pkg)
+    return maintainer_info
 
 
 def calculate_sha(content: Union[bytes, str]) -> Optional[str]:

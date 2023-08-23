@@ -355,7 +355,7 @@ def build_positive_dataset():
         inplace=True,
     )
     print(f"Total: {len(res['name'].unique())} packages, {len(res)} releases")
-    res.to_csv("data/positive_dataset_all.csv", index=False)
+    res.to_csv("data/positive_dataset_full.csv", index=False)
 
     # select the url of the latest version' url
     def select_version(x):
@@ -388,20 +388,20 @@ def build_positive_dataset():
     # sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
     print(f"{len(sample_releases)} records in positive_dataset.csv")
 
-    sample_releases.to_csv("data/positive_dataset_sample.csv", index=False)
+    sample_releases.to_csv("data/positive_dataset.csv", index=False)
 
 
 def build_negative_dataset():
-    if not os.path.exists("data/positive_dataset_all.csv"):
+    if not os.path.exists("data/positive_dataset_full.csv"):
         print(
-            "data/positive_dataset_all.csv not exists, please generate positive data first with `build_positive_data` function"
+            "data/positive_dataset_full.csv not exists, please generate positive data first with `build_positive_data` function"
         )
         return
 
     df = pd.read_csv(
         "data/metadata_retriever.csv", low_memory=False, keep_default_na=False
     )
-    positive_data_all = pd.read_csv("data/positive_dataset_all.csv")
+    positive_data_all = pd.read_csv("data/positive_dataset_full.csv")
     pkg_maintainers = json.load(open("data/pypi_maintainers.json"))
 
     # select releases whose repository url the same as positive datasets
@@ -516,7 +516,7 @@ def build_negative_dataset():
     )
     # sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
     print(len(sample_releases), "releases in the sample dataset")
-    sample_releases.to_csv("data/negative_dataset_sample.csv", index=False)
+    sample_releases.to_csv("data/negative_dataset.csv", index=False)
 
 
 def download(
@@ -573,8 +573,8 @@ def download_main(
 def download_dists(
     n_jobs: int, chunk_size: int, dist_folder: str, mirror: Optional[str] = None
 ):
-    positive_sample = pd.read_csv("data/positive_dataset_sample.csv")
-    negative_sample = pd.read_csv("data/negative_dataset_sample.csv")
+    positive_sample = pd.read_csv("data/positive_dataset.csv")
+    negative_sample = pd.read_csv("data/negative_dataset.csv")
     samples = pd.concat(
         [positive_sample[["name", "version"]], negative_sample[["name", "version"]]],
         ignore_index=True,

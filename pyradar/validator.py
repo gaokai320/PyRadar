@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import re
 import urllib.request
 from functools import cached_property
 from typing import Optional
@@ -8,7 +9,7 @@ from typing import Optional
 from pymongo import MongoClient
 
 from pyradar.repository import Repository
-from pyradar.utils import DistReader
+from pyradar.utils import DistReader, get_downloads_data, get_maintainer_info
 
 logger = logging.getLogger(__name__)
 
@@ -18,6 +19,13 @@ ACCEPTED_EXTENSIONS = (".tar.gz", ".zip", ".whl", ".egg")
 
 radar_db = MongoClient("127.0.0.1", 27017)["radar"]
 dist_file_info = radar_db["distribution_file_info"]
+
+download_data = get_downloads_data()
+maintainer_info = get_maintainer_info()
+
+pkg_maintainers = json.load(open("data/pypi_maintainers.json"))
+
+sub_pattern = re.compile(f"[^a-zA-Z0-9\.]")
 
 
 def download(
@@ -99,33 +107,88 @@ class Validator:
                 res.append((fname, fsha))
         return res
 
-    def get_phantom_files(
-        self, include: Optional[list[str]] = None
-    ) -> tuple[int, int, list[tuple[str, str]]]:
-        total = 0
-        matched = 0
-        phantom = []
+    @cached_property
+    def phantom_files(self) -> list[list[str, str]]:
+        res = []
         if self.distribution_files and self.repository:
             repo_blob_shas = self.repository.blob_shas
 
-            if include:
-                total_files = [
+            total = len(self.distribution_files)
+            matched = len(
+                [
                     (fname, fsha)
                     for fname, fsha in self.distribution_files
-                    if any(fname.endswith(suffix) for suffix in include)
+                    if fsha in repo_blob_shas
                 ]
-
-            else:
-                total_files = self.distribution_files
-
-            total = len(total_files)
-            matched = len(
-                [(fname, fsha) for fname, fsha in total_files if fsha in repo_blob_shas]
             )
-            phantom = [
+            res = [
                 [fname, fsha]
-                for fname, fsha in total_files
+                for fname, fsha in self.distribution_files
                 if fsha not in repo_blob_shas
             ]
 
-        return [total, matched, phantom]
+        return res
+
+    @cached_property
+    def num_phantom_pyfiles(self) -> int:
+        cnt = 0
+        for fname, _ in self.phantom_files:
+            if fname.endswith(".py"):
+                cnt += 1
+        return cnt
+
+    @cached_property
+    def setup_change(self) -> int:
+        for fname, _ in self.phantom_files:
+            if (len(fname.split("/")) == 2) and fname.endswith(
+                ("/setup.py", "/pyproject.toml")
+            ):
+                return 1
+        return 0
+
+    @cached_property
+    def num_downloads(self) -> int:
+        return download_data.get(self.name, 0)
+
+    @cached_property
+    def num_maintainers(self) -> int:
+        return len(pkg_maintainers.get(self.name, []))
+
+    @cached_property
+    def tag_match(self) -> int:
+        for tag in self.repository.tag_shas:
+            if self.version == tag:
+                return 1
+            if tag.endswith(self.version):
+                return 1
+            if sub_pattern.sub(".", tag).endswith(sub_pattern.sub(".", self.version)):
+                return 1
+        return 0
+
+    @cached_property
+    def num_maintainer_pkgs(self) -> int:
+        pkgs = []
+        for maintainer in pkg_maintainers.get(self.name, []):
+            pkgs.extend(maintainer_info[maintainer])
+        return len(set(pkgs))
+
+    @cached_property
+    def maintainer_max_downloads(self) -> int:
+        max_downloads = 0
+        for maintainer in pkg_maintainers.get(self.name, []):
+            for pkg in maintainer_info[maintainer]:
+                num_download = download_data.get(pkg, 0)
+                if num_download > max_downloads:
+                    max_downloads = num_download
+        return max_downloads
+
+    def features(self) -> list[str]:
+        return [
+            self.num_phantom_pyfiles,
+            self.setup_change,
+            self.num_downloads,
+            self.tag_match,
+            self.num_maintainers,
+            self.num_maintainer_pkgs,
+            self.maintainer_max_downloads,
+        ]

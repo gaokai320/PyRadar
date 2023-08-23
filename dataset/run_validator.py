@@ -6,6 +6,7 @@ import os
 
 import pandas as pd
 from joblib import Parallel, delayed
+from tqdm import tqdm
 
 from pyradar.validator import Validator
 
@@ -28,17 +29,18 @@ def get_phantom_file(data: pd.DataFrame, i: int, base_folder: str, prefix: str):
             tmp = {}
             tmp["version"] = version
             tmp["url"] = url
-            (
-                tmp["total_files"],
-                tmp["matched_files"],
-                tmp["phantom_file"],
-            ) = v.get_phantom_files()
+            tmp["phantom_file"] = v.phantom_files
             res[name] = tmp
         except Exception as e:
             logger.error(f"{name}, {version}, {url}, {e}")
 
     with open(f"data/{prefix}-{i}.json", "w") as outf:
         json.dump(res, outf)
+
+
+def feature_main(name: str, version: str, url: str):
+    v = Validator(name, version, url, "/data/kyle/pypi_data")
+    return v.features()
 
 
 if __name__ == "__main__":
@@ -50,13 +52,16 @@ if __name__ == "__main__":
     parser.add_argument("--n_jobs", default=1, type=int)
     parser.add_argument("--chunk_size", default=100, type=int)
     parser.add_argument(
+        "--features", default=False, action=argparse.BooleanOptionalAction
+    )
+    parser.add_argument(
         "--phantom_file", default=False, action=argparse.BooleanOptionalAction
     )
 
     args = parser.parse_args()
 
-    positive_df = pd.read_csv("data/positive_dataset_sample.csv")
-    negative_df = pd.read_csv("data/negative_dataset_sample.csv")
+    positive_df = pd.read_csv("data/positive_dataset.csv")
+    negative_df = pd.read_csv("data/negative_dataset.csv")
 
     if args.phantom_file:
         positive_prefix = "positive_phantom_files"
@@ -88,3 +93,42 @@ if __name__ == "__main__":
 
         with open(f"data/{negative_prefix}.json", "w") as outf:
             json.dump(negative_res, outf)
+
+    if args.features:
+        total = []
+        positive_features = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
+            delayed(feature_main)(name, version, url)
+            for name, version, url in tqdm(
+                positive_df[["name", "version", "url"]].itertuples(index=False),
+                total=len(positive_df),
+            )
+        )
+        for row, feature in zip(positive_df.itertuples(index=False), positive_features):
+            total.append([row.name, row.version, row.url] + feature + [1])
+
+        negative_features = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
+            delayed(feature_main)(name, version, url)
+            for name, version, url in tqdm(
+                negative_df[["name", "version", "url"]].itertuples(index=False),
+                total=len(negative_df),
+            )
+        )
+        for row, feature in zip(negative_df.itertuples(index=False), negative_features):
+            total.append([row.name, row.version, row.url] + feature + [-1])
+
+        pd.DataFrame(
+            total,
+            columns=[
+                "name",
+                "version",
+                "repo_url",
+                "num_phantom_pyfiles",
+                "setup_change",
+                "num_downloads",
+                "tag_match",
+                "num_maintainers",
+                "num_maintainer_pkgs",
+                "maintainer_max_downloads",
+                "label",
+            ],
+        ).to_csv("data/validator_dataset.csv", index=False)
