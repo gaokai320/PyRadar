@@ -27,11 +27,12 @@ def load_train_test_data(file_path,fold):
     #正样本过采样
     p_train = train_data[train_data.label == 1]
     p_train = p_train.sample(frac=10000/p_train.shape[0],replace=True,random_state=0)
+    
 
     #负样本欠采样
-    n_train = train_data[train_data.label == -1]
+    n_train = train_data[train_data.label == 0]
     n_train=n_train.sample(frac=10000/n_train.shape[0],replace=True,random_state=0)
-    n_train.label=0
+    
 
     train_data=pd.concat([p_train,n_train],ignore_index=True)
     train_data=train_data.sample(frac=1, random_state=0)
