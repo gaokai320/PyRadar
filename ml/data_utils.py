@@ -1,6 +1,9 @@
 import pandas as pd
 
-
+def write_result(file, str):
+    f = open(file, "a+")
+    f.write(str)
+    f.close()
 
 def load_raw_data(file_path):
 
