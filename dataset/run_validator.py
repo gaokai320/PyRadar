@@ -40,7 +40,7 @@ def get_phantom_file(data: pd.DataFrame, i: int, base_folder: str, prefix: str):
 
 def feature_main(name: str, version: str, url: str):
     v = Validator(name, version, url, "/data/kyle/pypi_data")
-    return v.features()
+    return [name, version, url] + v.features()
 
 
 if __name__ == "__main__":
@@ -95,40 +95,38 @@ if __name__ == "__main__":
             json.dump(negative_res, outf)
 
     if args.features:
-        total = []
-        positive_features = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
+        positive_data = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
             delayed(feature_main)(name, version, url)
             for name, version, url in tqdm(
                 positive_df[["name", "version", "url"]].itertuples(index=False),
                 total=len(positive_df),
             )
         )
-        for row, feature in zip(positive_df.itertuples(index=False), positive_features):
-            total.append([row.name, row.version, row.url] + feature + [1])
+        columns = [
+            "name",
+            "version",
+            "repo_url",
+            "num_phantom_pyfiles",
+            "setup_change",
+            "num_downloads",
+            "tag_match",
+            "num_maintainers",
+            "num_maintainer_pkgs",
+            "maintainer_max_downloads",
+        ]
+        positive_data = pd.DataFrame(positive_data, columns=columns)
+        positive_data["label"] = 0
 
-        negative_features = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
+        negative_data = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
             delayed(feature_main)(name, version, url)
             for name, version, url in tqdm(
                 negative_df[["name", "version", "url"]].itertuples(index=False),
                 total=len(negative_df),
             )
         )
-        for row, feature in zip(negative_df.itertuples(index=False), negative_features):
-            total.append([row.name, row.version, row.url] + feature + [-1])
+        negative_data = pd.DataFrame(negative_data, columns=columns)
+        negative_data["label"] = 1
 
-        pd.DataFrame(
-            total,
-            columns=[
-                "name",
-                "version",
-                "repo_url",
-                "num_phantom_pyfiles",
-                "setup_change",
-                "num_downloads",
-                "tag_match",
-                "num_maintainers",
-                "num_maintainer_pkgs",
-                "maintainer_max_downloads",
-                "label",
-            ],
-        ).to_csv("data/validator_dataset.csv", index=False)
+        df = pd.concat([positive_data, negative_data]).sample(frac=1)
+
+        df.to_csv("data/validator_dataset.csv", index=False)
