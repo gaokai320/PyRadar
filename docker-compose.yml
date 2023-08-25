@@ -1,8 +1,0 @@
-version: '3.8'
-
-services:
-  app:
-    build: .
-    volumes:
-      - ./:/app
-      - /data/kyle/pypi_data:/data/pypi_data
