@@ -1,4 +1,5 @@
 import configparser
+import gzip
 import json
 import logging
 import math
@@ -596,6 +597,70 @@ def download_dists(
     )
 
 
+def transform_url(x):
+    forge, user, repo = x.split("/")[2:]
+    if forge == "github.com":
+        return f"{user}_{repo}"
+    else:
+        return f"{forge}_{user}_{repo}"
+
+
+def build_retriever_dataset(dist_folder: str, mirror: Optional[str] = None):
+    if not os.path.exists("data/positive_dataset_full.csv"):
+        print(
+            "data/positive_dataset_full.csv not exists, please generate positive data first with `build_positive_data` function"
+        )
+        return
+    woc_repos = set()
+    with gzip.open("data/p2PU.s") as f:
+        for line in tqdm(f):
+            for repo in line.decode().strip("\n").split(";"):
+                woc_repos.add(normalize_url(repo))
+    print(f"{len(woc_repos)} unique repositories in woc")
+
+    positive_data = pd.read_csv(
+        "data/positive_dataset_full.csv", keep_default_na=False, low_memory=False
+    )
+
+    sdist_file_df = pd.DataFrame(
+        col.find({"packagetype": "sdist"}, projection={"_id": 0, "packagetype": 0})
+    )
+    sdist_file_df["upload_time"] = pd.to_datetime(sdist_file_df["upload_time"])
+
+    def url_in_woc(x):
+        forge, user, repo = x.split("/")[2:]
+        if forge == "github.com":
+            return f"{user}_{repo}" in woc_repos
+        else:
+            return f"{forge}_{user}_{repo}" in woc_repos
+
+    positive_data = positive_data[positive_data["url"].apply(url_in_woc)].copy()
+    positive_data.rename(columns={"url": "repo_url"}, inplace=True)
+    positive_data = positive_data[["name", "version", "repo_url"]].merge(
+        sdist_file_df, on=["name", "version"]
+    )
+    retriever_data = (
+        positive_data[positive_data["upload_time"] < "2021-10"]
+        .sort_values("upload_time", ascending=False)
+        .drop_duplicates("name")
+    )
+    retriever_data["woc_uri"] = retriever_data["repo_url"].apply(transform_url)
+    print(len(retriever_data["name"].unique()), "packages")
+
+    retriever_data[["name", "version", "repo_url", "woc_uri", "filename"]].to_csv(
+        "data/retriever_dataset.csv", index=False
+    )
+
+    for name, filename, url in tqdm(
+        retriever_data[["name", "filename", "url"]].itertuples(index=False),
+        total=len(retriever_data),
+    ):
+        if mirror:
+            url = url.replace("https://files.pythonhosted.org", mirror)
+        save_path = os.path.join(dist_folder, name, filename)
+        download(url, save_path, check=False)
+
+
 if __name__ == "__main__":
     import argparse
     import json
@@ -618,7 +683,10 @@ if __name__ == "__main__":
     parser.add_argument(
         "--download", default=False, action=argparse.BooleanOptionalAction
     )
-    parser.add_argument("--dest", type=str)
+    parser.add_argument(
+        "--retriever", default=False, action=argparse.BooleanOptionalAction
+    )
+    parser.add_argument("--base_folder", type=str)
     parser.add_argument("--mirror", default=None, type=str)
     parser.add_argument("--n_jobs", type=int, default=1)
     parser.add_argument("--chunk_size", type=int, default=100)
@@ -638,4 +706,14 @@ if __name__ == "__main__":
         build_negative_dataset()
 
     if args.download:
-        download_dists(args.n_jobs, args.chunk_size, args.dest, args.mirror)
+        download_dists(
+            args.n_jobs,
+            args.chunk_size,
+            os.path.join(args.base_folder, "distribution"),
+            args.mirror,
+        )
+
+    if args.retriever:
+        build_retriever_dataset(
+            os.path.join(args.base_folder, "distribution"), args.mirror
+        )
