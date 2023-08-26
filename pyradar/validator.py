@@ -6,6 +6,8 @@ import urllib.request
 from functools import cached_property
 from typing import Optional
 
+import pandas as pd
+from joblib import load
 from pymongo import MongoClient
 
 from pyradar.repository import Repository
@@ -192,3 +194,23 @@ class Validator:
             self.num_maintainer_pkgs,
             self.maintainer_max_downloads,
         ]
+
+    def validate(self, model="dt", threshold=0.5):
+        if model not in ["ada", "dt", "gb", "lr", "rf", "svm", "xgb"]:
+            print(
+                f"model should be ada, dt, gb, lr, rf, svm, or xgb, {model} is passed"
+            )
+            return
+        feature_columns = [
+            "num_phantom_pyfiles",
+            "setup_change",
+            "num_downloads",
+            "tag_match",
+            "num_maintainers",
+            "num_maintainer_pkgs",
+            "maintainer_max_downloads",
+        ]
+        features = pd.DataFrame([self.features()], columns=feature_columns)
+        ml_model = load(f"models/best_{model}.joblib")
+        prob = ml_model.predict_proba(features)[:, 1][0]
+        return prob
