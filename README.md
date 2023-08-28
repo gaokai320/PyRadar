@@ -44,7 +44,7 @@ python -m dataset.run_baselines --baseline ossgadget
 python -m dataset.run_baselines --baseline warehouse
 python -m dataset.run_baselines --baseline librariesio
 # caution: running py2src requires very heavy http requests and is very slow
-python -m dataset.run_baselines --baseline py2src --n_jobs <numOfProcessess> --chunk_size <numofChunks>
+python -m dataset.run_baselines --baseline py2src --n_jobs <numOfProcessess> --chunk_size <numofDataPerChunk>
 # dump baseline results to MongoDB
 python -m dataset.run_baselines --dump
 ```
@@ -63,13 +63,13 @@ python -m dataset.run_baselines --baseline librariesio --name tensorflow --versi
     2. The 2nd stage: use `--left_release` option to get all repository urls in the unique homepage and documentation webpage in the left releases whose metadata does not have repository url.
 
         ```shell
-        python -m dataset.run_metadata_retriever --left_release --n_jobs <numOfProcessess> --chunk_size <numofChunks>
+        python -m dataset.run_metadata_retriever --left_release --n_jobs <numOfProcessess> --chunk_size <numofDataPerChunk>
         ```
 
     3. The 3rd stage: use `--process_log` option to process failed urls in the 3nd stage.
 
         ```shell
-        python -m dataset.run_metadata_retriever --process_log --n_jobs <numOfProcessess> --chunk_size <numofChunks> 2>log/metadata_retriever.log.2
+        python -m dataset.run_metadata_retriever --process_log --n_jobs <numOfProcessess> --chunk_size <numofDataPerChunk> 2>log/metadata_retriever.log.2
         ```
 
     4. The 4th stage: use `--merge` option to merge retrived repository url for each webpage in the 3rd stage to MetadataRetriever results:
@@ -81,7 +81,7 @@ python -m dataset.run_baselines --baseline librariesio --name tensorflow --versi
     5. The 5th stage: use`--redirect` option to get the redirected url of each repository urls retrived by MetadataRetriever:
 
         ```shell
-        python -m dataset.run_metadata_retriever --redirect --n_jobs <numOfProcessess> --chunk_size <numofChunks> 2>log/metadata_retriever.log
+        python -m dataset.run_metadata_retriever --redirect --n_jobs <numOfProcessess> --chunk_size <numofDataPerChunk> 2>log/metadata_retriever.log
         ```
 
 You can also obtain results of a single release by passing `--name` and `--version` arguments. There are some options:
@@ -93,8 +93,17 @@ You can also obtain results of a single release by passing `--name` and `--versi
 python -m dataset.run_metadata_retriever --name tensorflow --version 2.10.0
 ```
 
-7. construct positive and negative dataset:
+1. construct dataset:
 
 ```shell
+# collect Python repositories on GitHub with more than 100 stars.
+python -m dataset.ground_truth --repository
+# collect packages in these GitHub repositories
+python -m dataset.ground_truth --package --n_jobs <numOfProcessess> --chunk_size <numofDataPerChunk>
+# collect PyPI package's PyPI maintainer
+python -m dataset.ground_truth --maintainer --n_jobs <numOfProcessess> --chunk_size <numofDataPerChunk>
+# construct ground truth dataset for validator
 python -m dataset.ground_truth --dataset
+# download source distributions for releases in the ground truth dataset, you can specify a PyPI mirror site to accelerate the downloading.
+python -m dataset.ground_truth --download --dest $DATA_HOME --n_jobs <numOfProcessess> --chunk_size <numofDataPerChunk> [ --mirror <PyPI mirror site>]
 ```

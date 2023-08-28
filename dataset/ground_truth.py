@@ -355,30 +355,19 @@ def build_positive_dataset():
         ].index,
         inplace=True,
     )
+    sdist = pd.DataFrame(
+        col.find(
+            {"packagetype": "sdist"},
+            projection={"_id": 0, "name": 1, "version": 1, "upload_time": 1},
+        )
+    )
+    res = res.merge(sdist, on=["name", "version"])
     print(f"Total: {len(res['name'].unique())} packages, {len(res)} releases")
     res.to_csv("data/positive_dataset_full.csv", index=False)
 
-    # select the url of the latest version' url
-    def select_version(x):
-        versions = []
-        for row in x.itertuples(index=False):
-            try:
-                Version(row.version)
-                versions.append((row.version, row.github, row.top4000))
-            except:
-                pass
-        if versions:
-            versions.sort(key=lambda x: Version(x[0]))
-        else:
-            versions = [
-                (row.version, row.github, row.top4000)
-                for row in x.itertuples(index=False)
-            ]
-            versions.sort(key=lambda x: x[0])
-        version, github, top4000 = versions[-1]
-        return pd.Series({"version": version, "github": github, "top4000": top4000})
-
-    sample_releases = res.groupby(["name", "url"]).apply(select_version).reset_index()
+    sample_releases = res.sort_values("upload_time", ascending=False).drop_duplicates(
+        "name"
+    )
     sample_releases.drop(
         sample_releases[
             (sample_releases["url"] == "https://github.com/pypa/sampleproject")
@@ -479,6 +468,13 @@ def build_negative_dataset():
     ].rename(columns={"name_candidate": "name"})
 
     negative_releases = negative_pkgs.merge(candidate_releases)
+    sdist = pd.DataFrame(
+        col.find(
+            {"packagetype": "sdist"},
+            projection={"_id": 0, "name": 1, "version": 1, "upload_time": 1},
+        )
+    )
+    negative_releases = negative_releases.merge(sdist, on=["name", "version"])
     print(
         len(negative_pkgs),
         "negative packages",
@@ -496,25 +492,9 @@ def build_negative_dataset():
 
     negative_releases.to_csv("data/negative_dataset_full.csv", index=False)
 
-    # select the url of the latest version' url
-    def select_version(x):
-        versions = []
-        for v in x["version"]:
-            try:
-                Version(v)
-                versions.append(v)
-            except:
-                pass
-        if versions:
-            versions.sort(key=lambda x: Version(x))
-        else:
-            versions = [v for v in x]
-            versions.sort(key=lambda x: x)
-        return pd.Series({"version": versions[-1]})
-
-    sample_releases = (
-        negative_releases.groupby(["name", "url"]).apply(select_version).reset_index()
-    )
+    sample_releases = negative_releases.sort_values(
+        "upload_time", ascending=False
+    ).drop_duplicates("name")
     # sample_releases["sdist_file"] = sample_releases.apply(gather_dist_filename, axis=1)
     print(len(sample_releases), "releases in the sample dataset")
     sample_releases.to_csv("data/negative_dataset.csv", index=False)
