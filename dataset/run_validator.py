@@ -39,8 +39,8 @@ def get_phantom_file(data: pd.DataFrame, i: int, base_folder: str, prefix: str):
         json.dump(res, outf)
 
 
-def feature_main(name: str, version: str, url: str):
-    v = Validator(name, version, url, "/data/kyle/pypi_data")
+def feature_main(name: str, version: str, url: str, base_folder: str):
+    v = Validator(name, version, url, base_folder)
     return [name, version, url] + v.features()
 
 
@@ -99,7 +99,7 @@ if __name__ == "__main__":
 
     if args.features:
         positive_data = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
-            delayed(feature_main)(name, version, url)
+            delayed(feature_main)(name, version, url, args.base_folder)
             for name, version, url in tqdm(
                 positive_df[["name", "version", "url"]].itertuples(index=False),
                 total=len(positive_df),

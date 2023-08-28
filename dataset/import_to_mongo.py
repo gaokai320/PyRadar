@@ -123,7 +123,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("data_path", type=str)
+    parser.add_argument("--base_folder", type=str)
     parser.add_argument(
         "--metadata", default=False, action=argparse.BooleanOptionalAction
     )
@@ -132,7 +132,7 @@ if __name__ == "__main__":
     )
     parser.add_argument("--drop", default=False, action=argparse.BooleanOptionalAction)
     args = parser.parse_args()
-    data_path = args.data_path
+    data_path = args.base_folder
     do_metadata = args.metadata
     do_distribution = args.distribution
     drop = args.drop

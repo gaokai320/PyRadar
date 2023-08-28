@@ -107,7 +107,7 @@ def list_release_dist_files(
     df = df.copy()
     if mirror:
         df.loc[:, "url"] = df["url"].apply(
-            lambda x: os.path.join(mirror, "/".join(x.rsplit("/", 4)[1:]))
+            lambda x: os.path.join("https://files.pythonhosted.org", mirror)
         )
 
     name = df.iloc[0]["name"]
@@ -152,7 +152,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str)
     parser.add_argument("--version", type=str)
-    parser.add_argument("--dest", type=str)
+    parser.add_argument("--base_folder", type=str)
     parser.add_argument("--all", default=False, action=argparse.BooleanOptionalAction)
     parser.add_argument("--mirror", default=None, type=str)
     parser.add_argument("--processes", default=1, type=int)
@@ -162,7 +162,7 @@ if __name__ == "__main__":
     df = pd.read_csv("data/sampled_releases.csv", keep_default_na=False)
     if args.all:
         print(
-            f"dest: {args.dest}, mirror: {args.mirror}, processes: {args.processes}, chunk_size: {args.chunk_size}"
+            f"dest: {args.base_folder}/distribution, mirror: {args.mirror}, processes: {args.processes}, chunk_size: {args.chunk_size}"
         )
         import math
 
@@ -171,7 +171,7 @@ if __name__ == "__main__":
         chunk_lst = chunks(df, args.chunk_size)
         num_chunks = math.ceil(len(df["name"].unique()) / args.chunk_size)
         Parallel(n_jobs=args.processes, backend="multiprocessing")(
-            delayed(main)(data, i, args.dest, args.mirror)
+            delayed(main)(data, i, f"{args.base_folder}/distribution", args.mirror)
             for i, data in enumerate(chunk_lst)
         )
         res = {}
@@ -188,11 +188,11 @@ if __name__ == "__main__":
             os.remove(f"data/release_dist_files-{i}.json")
     else:
         print(
-            f"name: {args.name}, version: {args.version}, dest: {args.dest}, mirror: {args.mirror}"
+            f"name: {args.name}, version: {args.version}, dest: {args.base_folder}/distribution, mirror: {args.mirror}"
         )
         res = list_release_dist_files(
             df[(df["name"] == args.name) & (df["version"] == args.version)],
-            args.dest,
+            f"{args.base_folder}/distribution",
             args.mirror,
         )
         print(cal_release_dists_diff(res))

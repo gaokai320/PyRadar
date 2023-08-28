@@ -17,20 +17,20 @@ def chunks(lst: list[str], n: int):
         yield lst[i : i + n]
 
 
-def main(urls: list[str]):
+def main(urls: list[str], base_folder: str):
     for url in urls:
-        repo = Repository(url, "/data/kyle/pypi_data")
+        repo = Repository(url, base_folder)
         if len(repo.commit_shas) > 10000:
             print(f"{url}: {len(repo.commit_shas)} commits")
         repo.traverse_all()
         logging.error(f"Finish {url}")
 
 
-def clean():
-    fs = list(Path("/data/kyle/pypi_data/repository/").glob("*/*/*/index.json"))
+def clean(base_folder: str):
+    fs = list(Path(f"{base_folder}/repository/").glob("*/*/*/index.json"))
     for f in fs:
         f.unlink(missing_ok=True)
-    fs = list(Path("/data/kyle/pypi_data/repository/").glob("*/*/*/snapshot-*.json"))
+    fs = list(Path(f"{base_folder}/repository/").glob("*/*/*/snapshot-*.json"))
     for f in fs:
         f.unlink(missing_ok=True)
 
@@ -42,6 +42,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--processes", type=int, default=1)
     parser.add_argument("--chunk_size", type=int, default=1)
+    parser.add_argument("--base_folder", type=str, required=True)
     parser.add_argument("--clean", default=False, action=argparse.BooleanOptionalAction)
     args = parser.parse_args()
     processes = args.processes
@@ -53,5 +54,5 @@ if __name__ == "__main__":
     chunk_lst = chunks(cloned_urls, chunk_size)
 
     Parallel(n_jobs=processes, backend="multiprocessing")(
-        delayed(main)(task) for task in chunk_lst
+        delayed(main, args.base_folder)(task) for task in chunk_lst
     )

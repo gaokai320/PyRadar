@@ -428,8 +428,9 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--url", type=str)
+    parser.add_argument("--base_folder", type=str, required=True)
     args = parser.parse_args()
     url = args.url
     print(url)
-    repo = Repository(url, "/data/kyle/pypi_data")
+    repo = Repository(url, args.base_folder)
     repo.traverse_all(disable_pbar=False)
