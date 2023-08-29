@@ -137,3 +137,11 @@ python -m dataset.run_validator --base_folder $DATA_HOME --n_jobs <numOfProcesse
 # Download the source distributions for the latest release of all PyPI packages
 python -m dataset.run_validator --base_folder $DATA_HOME --n_jobs <numOfProcessess> --pypi [ --mirror <PyPI mirror site> ]
 ```
+
+10.  fit machine learning models on validator features
+
+```shell
+
+# run Logistic Regression, Decision Tree, Random Forest, AdaBoost, Gradient Boosting, SVM, XGBoost
+python -m models.fit_model --all --n_jobs <numOfProcessess>
+```
