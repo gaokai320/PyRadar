@@ -202,6 +202,13 @@ def run(
                 logger.error(f"{name}, {version}, {e}")
 
 
+def normalize_url(url: str):
+    url = url.lower().strip("/")
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url
+
+
 def dump_to_database():
     for baseline in baselines.keys():
         if not os.path.exists(f"data/{baseline}.csv"):
@@ -211,13 +218,51 @@ def dump_to_database():
             return
 
     db = MongoClient("127.0.0.1", 27017)["radar"]
-    db.drop_collection("package_repository_url")
-    col = db.get_collection("package_repository_url")
+    db.drop_collection("baseline_results")
+    col = db.get_collection("baseline_results")
 
-    ossgadget = pd.read_csv("data/ossgadget.csv", keep_default_na=False)
-    warehouse = pd.read_csv("data/warehouse.csv", keep_default_na=False)
-    librariesio = pd.read_csv("data/librariesio.csv", keep_default_na=False)
+    ossgadget = pd.read_csv(
+        "data/ossgadget.csv", low_memory=False, keep_default_na=False
+    )
+    ossgadget["ossgadget"] = ossgadget["ossgadget"].apply(normalize_url)
+    ossgadget.to_csv("data/ossgadget.csv", index=False)
+
+    warehouse = pd.read_csv(
+        "data/warehouse.csv", low_memory=False, keep_default_na=False
+    )
+    warehouse["warehouse"] = warehouse["warehouse"].apply(normalize_url)
+    warehouse.to_csv("data/warehouse.csv", index=False)
+
+    librariesio = pd.read_csv(
+        "data/librariesio.csv", low_memory=False, keep_default_na=False
+    )
+    librariesio["librariesio"] = librariesio["librariesio"].apply(normalize_url)
+    librariesio.to_csv("data/librariesio.csv", index=False)
+
     py2src = pd.read_csv("data/py2src.csv", low_memory=False, keep_default_na=False)
+    py2src["py2src_ossgadget"] = py2src["py2src_ossgadget"].apply(normalize_url)
+    py2src["py2src_badge"] = py2src["py2src_badge"].apply(normalize_url)
+    py2src["py2src_homepage"] = py2src["py2src_homepage"].apply(normalize_url)
+    py2src["py2src_metadata"] = py2src["py2src_metadata"].apply(normalize_url)
+    py2src["py2src_readthedocs"] = py2src["py2src_readthedocs"].apply(normalize_url)
+    py2src["py2src_statistics"] = py2src["py2src_statistics"].apply(normalize_url)
+
+    def get_final(x):
+        tmp = [_ for _ in x if _]
+        mode_url = Counter(tmp).most_common(1)[0][0] if tmp else ""
+        return mode_url
+
+    py2src["py2src_final"] = py2src[
+        [
+            "py2src_ossgadget",
+            "py2src_badge",
+            "py2src_homepage",
+            "py2src_metadata",
+            "py2src_readthedocs",
+            "py2src_statistics",
+        ]
+    ].apply(get_final, axis=1)
+    py2src.to_csv("data/py2src.csv", index=False)
 
     res = reduce(
         lambda left, right: pd.merge(left, right, on=["name", "version"]),
