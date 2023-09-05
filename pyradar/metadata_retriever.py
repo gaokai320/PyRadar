@@ -19,6 +19,25 @@ repo_pattern = re.compile(
     flags=re.I,
 )
 
+coverall_badge_pattern = re.compile(
+    r"coveralls.io/(gitlab|github|bitbucket)/([a-z0-9_\.\-]+)/([a-z0-9_\.\-]+)"
+)
+
+codecov_badge_pattern = re.compile(
+    r"codecov.io/(gitlab|github|bitbucket)/([a-z0-9_\.\-]+)/([a-z0-9_\.\-]+)"
+)
+
+codeclimate_badge_pattern = re.compile(
+    r"codeclimate.com/(gitlab|github|bitbucket)/([a-z0-9_\.\-]+)/([a-z0-9_\.\-]+)"
+)
+
+travis_badge_pattern = re.compile(r"travis-ci.com/([a-z0-9_\.\-]+)/([a-z0-9_\.\-]+)")
+travis_badge_pattern2 = re.compile(r"travis-ci.org/([a-z0-9_\.\-]+)/([a-z0-9_\.\-]+)")
+
+circleci_badge_pattern = re.compile(
+    r"circleci.com/(gh|bb|gl)/([a-z0-9_\.\-]+)/([a-z0-9_\.\-]+)"
+)
+
 sub_pattern = re.compile(r"[^a-zA-Z0-9]")
 
 url_cache = {}
@@ -54,6 +73,48 @@ def find_repo_from_field(data: str) -> list[str]:
             continue
         url = f"https://{platform}/{user}/{repo}"
         urls.append(normalize_url(url))
+    return urls
+
+
+def find_repo_from_badge(data: str) -> list[str]:
+    if not data:
+        return []
+
+    urls = []
+
+    for s in [coverall_badge_pattern, codecov_badge_pattern, codeclimate_badge_pattern]:
+        for matchObj in s.findall(data):
+            platform, user, repo = matchObj
+            if platform.lower() == "github" and user.lower() in GITHUB_RESERVED_NAMES:
+                continue
+            if platform.lower() == "bitbucket":
+                platform = "bitbucket.org"
+            else:
+                platform = f"{platform.lower()}.com"
+            url = f"https://{platform}/{user}/{repo}"
+            urls.append(normalize_url(url))
+
+    for s in [travis_badge_pattern, travis_badge_pattern2]:
+        for matchObj in s.findall(data):
+            user, repo = matchObj
+            if user.lower() in GITHUB_RESERVED_NAMES:
+                continue
+            url = f"https://github.com/{user}/{repo}"
+            urls.append(normalize_url(url))
+
+    for matchObj in circleci_badge_pattern.findall(data):
+        platform, user, repo = matchObj
+        if platform.lower() == "gh":
+            platform = "github.com"
+        elif platform.lower() == "bb":
+            platform = "bitbucket.org"
+        elif platform.lower() == "gl":
+            platform = "gitlab.com"
+        if platform == "github.com" and user.lower() in GITHUB_RESERVED_NAMES:
+            continue
+        url = f"https://{platform}/{user}/{repo}"
+        urls.append(normalize_url(url))
+
     return urls
 
 
@@ -247,6 +308,7 @@ class MetadataRetriever:
     @staticmethod
     def search_description(name, description: str) -> Optional[str]:
         urls = find_repo_from_field(description)
+        urls += find_repo_from_badge(description)
         if urls:
             for url in urls:
                 repo = url.rsplit("/", 1)[-1]
