@@ -16,7 +16,6 @@ import requests
 from bs4 import BeautifulSoup
 from joblib import Parallel, delayed
 from packaging.utils import canonicalize_name
-from packaging.version import Version
 from pymongo import MongoClient
 from tqdm import tqdm
 
