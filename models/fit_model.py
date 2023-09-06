@@ -16,7 +16,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.preprocessing import RobustScaler
-from sklearn.svm import SVC, LinearSVC
+from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.utils import parallel_backend
 from xgboost import XGBClassifier
@@ -43,21 +43,44 @@ def prepare_data():
         "maintainer_max_downloads",
     ]
     df = pd.read_csv("data/validator_dataset.csv", keep_default_na=False)
+    train_df, test_df = train_test_split(df)
+    train_df = pd.concat(
+        [
+            train_df,
+            train_df[(train_df["label"] == 0) & (train_df["setup_change"] == 1)].sample(
+                frac=1, replace=True, random_state=random_state
+            ),
+            train_df[(train_df["label"] == 1) & (train_df["setup_change"] == 0)].sample(
+                frac=20, replace=True, random_state=random_state
+            ),
+        ],
+        ignore_index=True,
+    )
+    X_train = train_df[feature_columns]
+    Y_train = train_df["label"]
+
+    return X_train, Y_train, test_df[feature_columns], test_df["label"]
+
+
+def dump_results(model_name, model):
+    feature_columns = [
+        "num_phantom_pyfiles",
+        "setup_change",
+        "num_downloads",
+        "tag_match",
+        "num_maintainers",
+        "num_maintainer_pkgs",
+        "maintainer_max_downloads",
+    ]
+    df = pd.read_csv("data/validator_dataset.csv", keep_default_na=False)
+
     X = df[feature_columns]
     Y = df["label"]
 
-    X_train, X_test, Y_train, Y_test = train_test_split(
-        X, Y, test_size=0.2, random_state=random_state
-    )
-
-    return X_train, X_test, Y_train, Y_test
-
-
-def dump_results(model_name, X_test, Y_test, model):
     with open(f"data/{model_name}_prediction.csv", "w") as f:
         writer = csv.writer(f)
         writer.writerow(["true", "score"])
-        for y_true, y_score in zip(Y_test, model.predict_proba(X_test)[:, 1]):
+        for y_true, y_score in zip(Y, model.predict_proba(X)[:, 1]):
             writer.writerow([y_true, y_score])
 
     dump(model, f"models/best_{model_name}.joblib")
@@ -92,22 +115,20 @@ def grid_search(
         )
         with parallel_backend("multiprocessing"):
             grid.fit(X_train, Y_train)
+            test_auc = roc_auc_score(
+                Y_test, grid.best_estimator_.predict_proba(X_test)[:, 1]
+            )
             if best_score < grid.best_score_:
                 best_score = grid.best_score_
                 best_params = {k: v for k, v in grid.best_params_.items()}
                 best_params["oversampling_method"] = method
                 best_model = grid.best_estimator_
-            print(
-                method,
-                grid.best_params_,
-                grid.best_score_,
-                roc_auc_score(Y_test, grid.best_estimator_.predict_proba(X_test)[:, 1]),
-            )
+            print(method, grid.best_params_, grid.best_score_, test_auc)
 
     print(best_params, best_score)
     print(roc_auc_score(Y_test, best_model.predict_proba(X_test)[:, 1]))
 
-    dump_results(model_name, X_test, Y_test, best_model)
+    dump_results(model_name, best_model)
 
 
 def fit_lr(X_train, Y_train, X_test, Y_test, n_jobs: int = 1, cv: int = 10):
@@ -320,7 +341,7 @@ if __name__ == "__main__":
     parser.add_argument("--cv", default=10, type=int)
     args = parser.parse_args()
 
-    X_train, X_test, Y_train, Y_test = prepare_data()
+    X_train, Y_train, X_test, Y_test = prepare_data()
 
     if args.all:
         args.lr = True
