@@ -1,9 +1,9 @@
 import argparse
 import json
 import logging
+import os
 from pathlib import Path
 
-import pandas as pd
 from joblib import Parallel, delayed
 
 from pyradar.repository import Repository
@@ -36,7 +36,6 @@ def clean(base_folder: str):
 
 
 if __name__ == "__main__":
-    cloned_urls = json.load(open("data/cloned_repos.json"))
     logging.basicConfig(format="%(message)s", level=logging.ERROR)
 
     parser = argparse.ArgumentParser()
@@ -49,10 +48,20 @@ if __name__ == "__main__":
     chunk_size = args.chunk_size
     do_clean = args.clean
 
-    print(f"{processes} processes, {chunk_size} repos per batch")
+    cloned_urls = json.load(open("data/cloned_repos.json"))
+    remaining = []
+    for url in cloned_urls:
+        forge, user, repo = url.split("/")[-3:]
+        path = f"{args.base_folder}/repository/{forge}/{user}/{repo}/index.json"
+        if not os.path.exists(path):
+            remaining.append(url)
 
-    chunk_lst = chunks(cloned_urls, chunk_size)
+    print(
+        f"{len(cloned_urls)} repos, {len(remaining)} left, {processes} processes, {chunk_size} repos per batch"
+    )
+
+    chunk_lst = chunks(remaining, chunk_size)
 
     Parallel(n_jobs=processes, backend="multiprocessing")(
-        delayed(main, args.base_folder)(task) for task in chunk_lst
+        delayed(main)(task, args.base_folder) for task in chunk_lst
     )

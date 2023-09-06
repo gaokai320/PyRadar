@@ -59,3 +59,6 @@ if __name__ == "__main__":
 
     with open("data/cloned_repos.json", "w") as outf:
         json.dump(cloned_urls, outf)
+
+    df.loc[~df["redirected"].isin(cloned_urls), "redirected"] = ""
+    df.to_csv("data/metadata_retriever.csv", index=False)
