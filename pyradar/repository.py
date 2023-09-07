@@ -411,6 +411,16 @@ class Repository:
         nodes = json.load(open(nodes_path))
         return list(nodes["blob"].keys())
 
+    @cached_property
+    def file_names(self) -> list[str]:
+        nodes_path = os.path.join(self.data_folder, "index.json")
+        if not os.path.exists(nodes_path):
+            logger.info(f"index.json not exists, start traversing all commits")
+            self.traverse_all()
+        logger.info(f"loading from index.json")
+        nodes = json.load(open(nodes_path))
+        return list(nodes["filename"].keys())
+
     def read_blob_content(self, blob_sha: str) -> str:
         """read the content of a blob object
 

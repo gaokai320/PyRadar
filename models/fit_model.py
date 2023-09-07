@@ -36,11 +36,11 @@ def prepare_data():
     feature_columns = [
         "num_phantom_pyfiles",
         "setup_change",
-        "num_downloads",
+        "name_similarity",
         "tag_match",
         "num_maintainers",
         "num_maintainer_pkgs",
-        "maintainer_max_downloads",
+        # "maintainer_max_downloads",
     ]
     df = pd.read_csv("data/validator_dataset.csv", keep_default_na=False)
     train_df, test_df = train_test_split(df)
@@ -66,11 +66,11 @@ def dump_results(model_name, model):
     feature_columns = [
         "num_phantom_pyfiles",
         "setup_change",
-        "num_downloads",
+        "name_similarity",
         "tag_match",
         "num_maintainers",
         "num_maintainer_pkgs",
-        "maintainer_max_downloads",
+        # "maintainer_max_downloads",
     ]
     df = pd.read_csv("data/validator_dataset.csv", keep_default_na=False)
 
@@ -102,7 +102,7 @@ def grid_search(
     best_score = 0
     best_model = None
 
-    for method in ["Random", "SMOTE", "ADASYN"]:
+    for method in ["Random"]:
         pipeline = Pipeline([("oversampling", over_sampleing_methods[method])] + steps)
         grid = GridSearchCV(
             pipeline,
@@ -139,10 +139,10 @@ def fit_lr(X_train, Y_train, X_test, Y_test, n_jobs: int = 1, cv: int = 10):
                 RobustScaler(),
                 [
                     "num_phantom_pyfiles",
-                    "num_downloads",
+                    "name_similarity",
                     "num_maintainers",
                     "num_maintainer_pkgs",
-                    "maintainer_max_downloads",
+                    # "maintainer_max_downloads",
                 ],
             )
         ]
@@ -222,16 +222,16 @@ def fit_rf(X_train, Y_train, X_test, Y_test, n_jobs: int = 1, cv: int = 10):
 
 def fit_svm(X_train, Y_train, X_test, Y_test, n_jobs: int = 1, cv: int = 10):
     params = [
-        {"svc__C": [0.1, 1, 10, 100], "svc__kernel": ["linear"]},
+        # {"svc__C": [0.1, 1, 10, 100], "svc__kernel": ["linear"]},
         {
             "svc__C": [0.1, 1, 10, 100],
             "svc__kernel": ["rbf", "sigmoid"],
         },
-        {
-            "svc__C": [0.1, 1, 10, 100],
-            "svc__kernel": ["poly"],
-            "svc__degree": [2, 3, 4, 5],
-        },
+        # {
+        #     "svc__C": [0.1, 1, 10, 100],
+        #     "svc__kernel": ["poly"],
+        #     "svc__degree": [2, 3, 4, 5],
+        # },
     ]
 
     steps = [
