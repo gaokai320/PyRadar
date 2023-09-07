@@ -3,6 +3,7 @@ import json
 import logging
 import math
 import os
+import sys
 
 import pandas as pd
 from joblib import Parallel, delayed
@@ -40,8 +41,12 @@ def get_phantom_file(data: pd.DataFrame, i: int, base_folder: str, prefix: str):
 
 
 def feature_main(name: str, version: str, url: str, base_folder: str):
-    v = Validator(name, version, url, base_folder)
-    return [name, version, url] + v.features()
+    try:
+        v = Validator(name, version, url, base_folder)
+        return [name, version, url] + v.features()
+    except:
+        logger.error(f"{name}, {version}, {url}")
+        return [name, version, url] + [-1] * 6
 
 
 if __name__ == "__main__":
@@ -60,6 +65,9 @@ if __name__ == "__main__":
         "--phantom_file", default=False, action=argparse.BooleanOptionalAction
     )
     parser.add_argument("--pypi", default=False, action=argparse.BooleanOptionalAction)
+    parser.add_argument(
+        "--pypi_features", default=False, action=argparse.BooleanOptionalAction
+    )
 
     args = parser.parse_args()
 
@@ -103,6 +111,7 @@ if __name__ == "__main__":
             for name, version, url in tqdm(
                 positive_df[["name", "version", "url"]].itertuples(index=False),
                 total=len(positive_df),
+                file=sys.stdout,
             )
         )
         columns = [
@@ -111,20 +120,21 @@ if __name__ == "__main__":
             "repo_url",
             "num_phantom_pyfiles",
             "setup_change",
-            "num_downloads",
+            "name_similarity",
             "tag_match",
             "num_maintainers",
             "num_maintainer_pkgs",
-            "maintainer_max_downloads",
+            # "maintainer_max_downloads",
         ]
         positive_data = pd.DataFrame(positive_data, columns=columns)
         positive_data["label"] = 0
 
         negative_data = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
-            delayed(feature_main)(name, version, url)
+            delayed(feature_main)(name, version, url, args.base_folder)
             for name, version, url in tqdm(
                 negative_df[["name", "version", "url"]].itertuples(index=False),
                 total=len(negative_df),
+                file=sys.stdout,
             )
         )
         negative_data = pd.DataFrame(negative_data, columns=columns)
@@ -171,3 +181,53 @@ if __name__ == "__main__":
             name, filename, url = d["name"], d["filename"], d["url"]
             save_path = os.path.join(args.base_folder, "distribution", name, filename)
             download(url, save_path)
+
+    if args.pypi_features:
+        dist_file_info_col = MongoClient("127.0.0.1", 27017)["radar"][
+            "distribution_file_info"
+        ]
+        sdist_file_df = pd.DataFrame(
+            dist_file_info_col.find(
+                {"packagetype": "sdist"}, projection={"_id": 0, "packagetype": 0}
+            )
+        )
+        sdist_file_df["upload_time"] = pd.to_datetime(sdist_file_df["upload_time"])
+        retriver_df = pd.read_csv(
+            "data/metadata_retriever.csv", low_memory=False, keep_default_na=False
+        )
+        release_with_repo = retriver_df[retriver_df["redirected"] != ""]
+
+        latest_releases = (
+            sdist_file_df.merge(release_with_repo[["name", "version", "redirected"]])
+            .sort_values("upload_time", ascending=False)
+            .drop_duplicates(["name"])
+        )
+        print(f"{len(latest_releases)} releases")
+
+        features = Parallel(n_jobs=args.n_jobs, backend="multiprocessing")(
+            delayed(feature_main)(name, version, repo_url, args.base_folder)
+            for name, version, repo_url in tqdm(
+                latest_releases[["name", "version", "redirected"]].itertuples(
+                    index=False
+                ),
+                file=sys.stdout,
+                total=len(latest_releases),
+            )
+        )
+
+        columns = [
+            "name",
+            "version",
+            "repo_url",
+            "num_phantom_pyfiles",
+            "setup_change",
+            "name_similarity",
+            "tag_match",
+            "num_maintainers",
+            "num_maintainer_pkgs",
+            # "maintainer_max_downloads",
+        ]
+
+        df = pd.DataFrame(features, columns=columns)
+        df = df[df["num_phantom_pyfiles"] != -1]
+        df.to_csv("data/validate_all_pypi.csv", index=False)
