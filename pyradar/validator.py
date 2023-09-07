@@ -8,6 +8,7 @@ from typing import Optional
 
 import pandas as pd
 from joblib import load
+from Levenshtein import ratio
 from pymongo import MongoClient
 
 from pyradar.repository import Repository
@@ -28,6 +29,7 @@ maintainer_info = get_maintainer_info()
 pkg_maintainers = json.load(open("data/pypi_maintainers.json"))
 
 sub_pattern = re.compile(f"[^a-zA-Z0-9\.]")
+sub_pattern2 = re.compile(r"[^a-zA-Z0-9]")
 
 
 def download(
@@ -62,6 +64,7 @@ class Validator:
         repo_url: str,
         base_folder: str,
         packagetype: str = "sdist",
+        translate_newline: bool = True,
     ) -> None:
         """Configure package's name, version, and data folder.
 
@@ -76,6 +79,7 @@ class Validator:
         self.base_folder = base_folder
         self.distribution_folder = os.path.join(base_folder, "distribution", self.name)
         self.packagetype = packagetype
+        self.translate_newline = translate_newline
 
     @cached_property
     def repository(self) -> Optional[Repository]:
@@ -105,7 +109,9 @@ class Validator:
                 continue
             save_path = os.path.join(self.distribution_folder, filename)
             download(url, save_path)
-            for fname, fsha in DistReader(save_path).file_shas():
+            for fname, fsha in DistReader(
+                save_path, self.translate_newline
+            ).file_shas():
                 res.append((fname, fsha))
         return res
 
@@ -114,15 +120,6 @@ class Validator:
         res = []
         if self.distribution_files and self.repository:
             repo_blob_shas = self.repository.blob_shas
-
-            total = len(self.distribution_files)
-            matched = len(
-                [
-                    (fname, fsha)
-                    for fname, fsha in self.distribution_files
-                    if fsha in repo_blob_shas
-                ]
-            )
             res = [
                 [fname, fsha]
                 for fname, fsha in self.distribution_files
@@ -133,6 +130,8 @@ class Validator:
 
     @cached_property
     def num_phantom_pyfiles(self) -> int:
+        if (not self.distribution_files) or (not self.repository):
+            return -1
         cnt = 0
         for fname, _ in self.phantom_files:
             if fname.endswith(".py"):
@@ -141,10 +140,20 @@ class Validator:
 
     @cached_property
     def setup_change(self) -> int:
+        has_setup, has_pyproject = False, False
+        for f in self.repository.file_names:
+            basename = f.split("/")[-1]
+            if (not has_setup) and (basename == "setup.py"):
+                has_setup = True
+            if (not has_pyproject) and (basename == "pyproject.toml"):
+                has_pyproject = True
+
         for fname, _ in self.phantom_files:
-            if (len(fname.split("/")) == 2) and fname.endswith(
-                ("/setup.py", "/pyproject.toml")
-            ):
+            if len(fname.split("/")) != 2:
+                continue
+            if (os.path.basename(fname) == "setup.py") and has_setup:
+                return 1
+            if (os.path.basename(fname) == "pyproject.toml") and has_pyproject:
                 return 1
         return 0
 
@@ -175,6 +184,18 @@ class Validator:
         return len(set(pkgs))
 
     @cached_property
+    def name_similarity(self):
+        user, repo = self.repository_url.split("/")[-2:]
+        ratio1 = ratio(
+            sub_pattern2.sub("", self.name),
+            sub_pattern2.sub("", repo),
+        )
+        ratio2 = ratio(
+            sub_pattern2.sub("", self.name), sub_pattern2.sub("", user + repo)
+        )
+        return max(ratio1, ratio2)
+
+    @cached_property
     def maintainer_max_downloads(self) -> int:
         max_downloads = 0
         for maintainer in pkg_maintainers.get(self.name, []):
@@ -188,11 +209,11 @@ class Validator:
         return [
             self.num_phantom_pyfiles,
             self.setup_change,
-            self.num_downloads,
+            self.name_similarity,
             self.tag_match,
             self.num_maintainers,
             self.num_maintainer_pkgs,
-            self.maintainer_max_downloads,
+            # self.maintainer_max_downloads,
         ]
 
     def validate(self, model="dt", threshold=0.5):
@@ -204,11 +225,11 @@ class Validator:
         feature_columns = [
             "num_phantom_pyfiles",
             "setup_change",
-            "num_downloads",
+            "name_similarity",
             "tag_match",
             "num_maintainers",
             "num_maintainer_pkgs",
-            "maintainer_max_downloads",
+            # "maintainer_max_downloads",
         ]
         features = pd.DataFrame([self.features()], columns=feature_columns)
         ml_model = load(f"models/best_{model}.joblib")
