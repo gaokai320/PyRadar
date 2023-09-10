@@ -2,7 +2,6 @@ import json
 import logging
 import os
 import re
-import urllib.request
 from functools import cached_property
 from typing import Optional
 
@@ -12,7 +11,7 @@ from Levenshtein import ratio
 from pymongo import MongoClient
 
 from pyradar.repository import Repository
-from pyradar.utils import DistReader, get_downloads_data, get_maintainer_info
+from pyradar.utils import DistReader, download, get_downloads_data, get_maintainer_info
 
 logger = logging.getLogger(__name__)
 
@@ -30,30 +29,6 @@ pkg_maintainers = json.load(open("data/pypi_maintainers.json"))
 
 sub_pattern = re.compile(f"[^a-zA-Z0-9\.]")
 sub_pattern2 = re.compile(r"[^a-zA-Z0-9]")
-
-
-def download(
-    url: str,
-    save_path: str,
-    check: bool = True,
-    max_try=3,
-) -> bool:
-    if check and os.path.exists(save_path):
-        return True
-
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    success = False
-    i = 0
-
-    while (not success) and (i < max_try):
-        try:
-            urllib.request.urlretrieve(url, save_path)
-            success = True
-        except Exception as e:
-            i += 1
-            logger.error(f"Error downloading {url}, retry {i}: {e}")
-
-    return success
 
 
 class Validator:
@@ -96,17 +71,18 @@ class Validator:
             dict[str, str]: three kay-value pairs corresponding to packagetypes: `sdist`, `bdist_wheel`, `bdist_egg` respectively
         """
         res = []
-        for data in dist_file_info.find(
+        data = dist_file_info.find_one(
             {
                 "name": self.name,
                 "version": self.version,
                 "packagetype": self.packagetype,
             }
-        ):
+        )
+        if data:
             url = data["url"]
             filename = data["filename"]
             if not filename.endswith(ACCEPTED_EXTENSIONS):
-                continue
+                return res
             save_path = os.path.join(self.distribution_folder, filename)
             download(url, save_path)
             for fname, fsha in DistReader(
