@@ -4,11 +4,61 @@ import json
 import logging
 import os
 import tarfile
+import urllib.request
 import zipfile
 from collections import OrderedDict
 from typing import Optional, Union
 
 logger = logging.getLogger(__name__)
+
+
+URL_PREFIXES = [
+    "0xacab.org",
+    "android.googlesource.com",
+    "bioconductor.org",
+    "blitiri.com.ar",
+    "code.ill.fr",
+    "code.qt.io",
+    "drupal.com",
+    "fedorapeople.org",
+    "forgemia.inra.fr",
+    "framagit.org",
+    "gcc.git",
+    "git.alpinelinux.org",
+    "git.debian.org",
+    "git.eclipse.org",
+    "git.kernel.org",
+    "git.openembedded.org",
+    "git.pleroma.social",
+    "git.postgresql.org",
+    "git.savannah.gnu.org",
+    "git.savannah.nongnu.org",
+    "git.torproject.org",
+    "git.unicaen.fr",
+    "git.unistra.fr",
+    "git.xfce.org",
+    "git.yoctoproject.org",
+    "git.zx2c4.com",
+    "gitbox.apache.org",
+    "gite.lirmm.fr",
+    "gitlab.adullact.net",
+    "gitlab.cerema.fr",
+    "gitlab.common-lisp.net",
+    "gitlab.fing.edu.uy",
+    "gitlab.freedesktop.org",
+    "gitlab.gnome.org",
+    "gitlab.huma-num.fr",
+    "gitlab.inria.fr",
+    "gitlab.irstea.fr",
+    "gitlab.ow2.org",
+    "invent.kde.org",
+    "kde.org",
+    "notabug.org",
+    "pagure.io",
+    "repo.or.cz",
+    "salsa.debian.org",
+    "sourceforge.net",
+]
 
 
 def get_downloads_data():
@@ -19,6 +69,49 @@ def get_downloads_data():
         for entries in reader:
             downloads[entries[0]] = int(entries[1])
     return downloads
+
+
+def normalize_url(url: str):
+    url = url.lower().strip("/")
+    if url.endswith(".git"):
+        url = url[:-4]
+    return url
+
+
+def restore_url(woc_uri: str):
+    if woc_uri.count("_") < 1:
+        return
+    prefix, body = woc_uri.split("_", 1)
+    if prefix in ["gitlab.com", "bitbucket.org"]:
+        url = f"https://{prefix}/" + body.replace("_", "/", 1)
+        return normalize_url(url)
+    elif prefix not in URL_PREFIXES:
+        url = f"https://github.com/" + woc_uri.replace("_", "/", 1)
+        return normalize_url(url)
+
+
+def download(
+    url: str,
+    save_path: str,
+    check: bool = True,
+    max_try=3,
+) -> bool:
+    if check and os.path.exists(save_path):
+        return True
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    success = False
+    i = 0
+
+    while (not success) and (i < max_try):
+        try:
+            urllib.request.urlretrieve(url, save_path)
+            success = True
+        except Exception as e:
+            i += 1
+            logger.error(f"Error downloading {url}, retry {i}: {e}")
+
+    return success
 
 
 def get_maintainer_info():
