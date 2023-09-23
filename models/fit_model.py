@@ -3,7 +3,7 @@ import csv
 import warnings
 
 import pandas as pd
-from imblearn.over_sampling import ADASYN, SMOTE, RandomOverSampler
+from imblearn.over_sampling import RandomOverSampler
 from imblearn.pipeline import Pipeline
 from joblib import dump
 from sklearn.compose import ColumnTransformer
@@ -23,16 +23,10 @@ from xgboost import XGBClassifier
 
 random_state = 42
 
-over_sampleing_methods = {
-    "Random": RandomOverSampler(random_state=random_state),
-    "ADASYN": ADASYN(random_state=random_state),
-    "SMOTE": SMOTE(random_state=random_state),
-}
-
 warnings.filterwarnings(action="ignore", category=UserWarning)
 
 
-def prepare_data():
+def prepare_data(upsample: bool = True):
     feature_columns = [
         "num_phantom_pyfiles",
         "setup_change",
@@ -44,18 +38,19 @@ def prepare_data():
     ]
     df = pd.read_csv("data/validator_dataset.csv", keep_default_na=False)
     train_df, test_df = train_test_split(df)
-    train_df = pd.concat(
-        [
-            train_df,
-            train_df[(train_df["label"] == 0) & (train_df["setup_change"] == 1)].sample(
-                frac=1, replace=True, random_state=random_state
-            ),
-            train_df[(train_df["label"] == 1) & (train_df["setup_change"] == 0)].sample(
-                frac=20, replace=True, random_state=random_state
-            ),
-        ],
-        ignore_index=True,
-    )
+    if upsample:
+        train_df = pd.concat(
+            [
+                train_df,
+                train_df[
+                    (train_df["label"] == 0) & (train_df["setup_change"] == 1)
+                ].sample(frac=0.5, replace=True, random_state=random_state),
+                train_df[
+                    (train_df["label"] == 1) & (train_df["setup_change"] == 0)
+                ].sample(frac=10, replace=True, random_state=random_state),
+            ],
+            ignore_index=True,
+        )
     X_train = train_df[feature_columns]
     Y_train = train_df["label"]
 
@@ -98,37 +93,27 @@ def grid_search(
     cv: int = 10,
     verbose: int = 0,
 ):
-    best_params = {}
-    best_score = 0
-    best_model = None
-
-    for method in ["Random"]:
-        pipeline = Pipeline([("oversampling", over_sampleing_methods[method])] + steps)
-        grid = GridSearchCV(
-            pipeline,
-            param_grid=params,
-            scoring="roc_auc",
-            refit=True,
-            n_jobs=n_jobs,
-            cv=cv,
-            verbose=verbose,
+    pipeline = Pipeline(
+        [("oversampling", RandomOverSampler(random_state=random_state))] + steps
+    )
+    grid = GridSearchCV(
+        pipeline,
+        param_grid=params,
+        scoring="roc_auc",
+        refit=True,
+        n_jobs=n_jobs,
+        cv=cv,
+        verbose=verbose,
+    )
+    with parallel_backend("multiprocessing"):
+        grid.fit(X_train, Y_train)
+        test_auc = roc_auc_score(
+            Y_test, grid.best_estimator_.predict_proba(X_test)[:, 1]
         )
-        with parallel_backend("multiprocessing"):
-            grid.fit(X_train, Y_train)
-            test_auc = roc_auc_score(
-                Y_test, grid.best_estimator_.predict_proba(X_test)[:, 1]
-            )
-            if best_score < grid.best_score_:
-                best_score = grid.best_score_
-                best_params = {k: v for k, v in grid.best_params_.items()}
-                best_params["oversampling_method"] = method
-                best_model = grid.best_estimator_
-            print(method, grid.best_params_, grid.best_score_, test_auc)
+        print(grid.best_params_)
+        print(grid.best_score_, test_auc)
 
-    print(best_params, best_score)
-    print(roc_auc_score(Y_test, best_model.predict_proba(X_test)[:, 1]))
-
-    dump_results(model_name, best_model)
+        dump_results(model_name, grid.best_estimator_)
 
 
 def fit_lr(X_train, Y_train, X_test, Y_test, n_jobs: int = 1, cv: int = 10):

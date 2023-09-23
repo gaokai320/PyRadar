@@ -62,6 +62,9 @@ if __name__ == "__main__":
         "--features", default=False, action=argparse.BooleanOptionalAction
     )
     parser.add_argument(
+        "--truncate", default=False, action=argparse.BooleanOptionalAction
+    )
+    parser.add_argument(
         "--phantom_file", default=False, action=argparse.BooleanOptionalAction
     )
     parser.add_argument("--pypi", default=False, action=argparse.BooleanOptionalAction)
@@ -141,6 +144,17 @@ if __name__ == "__main__":
         negative_data["label"] = 1
 
         df = pd.concat([positive_data, negative_data]).sample(frac=1)
+        if args.truncate:
+            no_sampleproject = df[
+                df["repo_url"] != "https://github.com/pypa/sampleproject"
+            ]
+            sampleproject = df[
+                (df["label"] == 1)
+                & (df["repo_url"] == "https://github.com/pypa/sampleproject")
+            ].sample(343)
+            df = pd.concat([no_sampleproject, sampleproject], ignore_index=True).sample(
+                frac=1
+            )
 
         df.to_csv("data/validator_dataset.csv", index=False)
 
