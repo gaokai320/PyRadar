@@ -12,6 +12,15 @@ pip install -r requirements.txt
 export DATA_HOME=<Folder to Store Data>
 ```
 
+## Folder Structure
+
+> - baseline_analysis.ipynb: Code for RQ1 results for Metadata-based Retriever evaluation.
+> - dist_diff_analysis.ipynb and dist_file_analysis.ipynb: Code for why use the source distribution.
+> - phantom_file_analysis.ipynb: Code for RQ2 results.
+> - validator_analysis.ipynb: Code for Source Code Repository Validator evaluation.
+> - retriever_analysis.ipynb: Code for Source Code-based Retriever evaluation.
+
+
 ## Run Scripts
 1. Dump PyPI package metadata
 ```shell
