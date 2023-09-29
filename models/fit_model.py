@@ -13,7 +13,7 @@ from sklearn.ensemble import (
     RandomForestClassifier,
 )
 from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import roc_auc_score
+from sklearn.metrics import accuracy_score, precision_score, recall_score, roc_auc_score
 from sklearn.model_selection import GridSearchCV, train_test_split
 from sklearn.preprocessing import RobustScaler
 from sklearn.svm import SVC
@@ -37,7 +37,8 @@ def prepare_data(upsample: bool = True):
         # "maintainer_max_downloads",
     ]
     df = pd.read_csv("data/validator_dataset.csv", keep_default_na=False)
-    train_df, test_df = train_test_split(df)
+    df = df[(df["num_phantom_pyfiles"] >= 0) & (df["num_maintainers"] > 0)]
+    train_df, test_df = train_test_split(df, random_state=random_state)
     if upsample:
         train_df = pd.concat(
             [
@@ -107,11 +108,15 @@ def grid_search(
     )
     with parallel_backend("multiprocessing"):
         grid.fit(X_train, Y_train)
+        pred = grid.best_estimator_.predict(X_test)
         test_auc = roc_auc_score(
             Y_test, grid.best_estimator_.predict_proba(X_test)[:, 1]
         )
+        test_acc = accuracy_score(Y_test, pred)
+        test_prec = precision_score(Y_test, pred)
+        test_recall = recall_score(Y_test, pred)
         print(grid.best_params_)
-        print(grid.best_score_, test_auc)
+        print(grid.best_score_, test_auc, test_acc, test_prec, test_recall)
 
         dump_results(model_name, grid.best_estimator_)
 

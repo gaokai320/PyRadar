@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import io
 import json
 import logging
 import os
@@ -172,6 +173,25 @@ class CacheDict(OrderedDict):
         return val
 
 
+def detect_newline(data: bytes):
+    if data.endswith(b"\r\n"):
+        return "\r\n"
+    elif data.endswith(b"\r"):
+        return "\r"
+    return "\n"
+
+
+def replace_newline(data: list[bytes]):
+    res = []
+    for line in data:
+        if line.endswith(b"\r\n"):
+            line = line[:-2] + b"\n"
+        elif line.endswith(b"\r"):
+            line = line[:-1] + b"\n"
+        res.append(line)
+    return b"".join(res)
+
+
 class ZipReader:
     def __init__(
         self,
@@ -237,10 +257,14 @@ class ZipReader:
     def get_file_content(self, filename: str) -> str:
         ## translate \r\n to \n
         res = self.file.open(filename).read()
-        if self.translate_newline:
-            res = res.replace(b"\r\n", b"\n")
-            res = res.replace(b"\r", b"\n")
-
+        if self.translate_newline and (
+            os.path.basename(filename) in ["setup.py", "pyproject.toml"]
+        ):
+            try:
+                res.decode()
+                return replace_newline(self.file.open(filename).readlines())
+            except:
+                pass
         return res
 
 
@@ -258,7 +282,7 @@ class TarReader:
                     continue
                 if member.name.rsplit("/", 1)[0].endswith(".egg-info"):
                     continue
-                content = self.get_file_content(member)
+                content = self.get_file_content(member.name)
                 res.append(
                     (
                         member.name,
@@ -269,11 +293,9 @@ class TarReader:
 
     def get_file_content(self, filename: str) -> str:
         res = self.file.extractfile(filename).read()
-        ## translate \r\n to \n
-        if self.translate_newline:
-            res = res.replace(b"\r\n", b"\n")
-            res = res.replace(b"\r", b"\n")
-
+        if self.translate_newline and (os.path.basename(filename) == "setup.py"):
+            res.replace(b"\r\n", b"\n")
+            res.replace(b"\r", b"\n")
         return res
 
 

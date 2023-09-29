@@ -107,9 +107,8 @@ def list_release_dist_files(
     df = df.copy()
     if mirror:
         df.loc[:, "url"] = df["url"].apply(
-            lambda x: os.path.join("https://files.pythonhosted.org", mirror)
+            lambda x: x.replace("https://files.pythonhosted.org", mirror)
         )
-
     name = df.iloc[0]["name"]
     res = {}
     for row in df.itertuples(index=False):

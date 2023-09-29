@@ -107,7 +107,7 @@ python -m dataset.list_blobs --base_folder $DATA_HOME --processes <numOfProcesse
 8. Compare the difference between source distributions and binary distributions
 
 ```shell
-python -m dataset.dist_diff --dest /data/kyle/pypi_data/distribution --all --processes <numOfProcessess> --chunk_size <numofDataPerChunk> [ --mirror <PyPI mirror site> ]
+python -m dataset.dist_diff --base_folder $DATA_HOME --all --processes <numOfProcessess> --chunk_size <numofDataPerChunk> [ --mirror <PyPI mirror site> ]
 ```
 
 9.  construct dataset:
@@ -136,6 +136,9 @@ python -m dataset.run_validator --base_folder $DATA_HOME --n_jobs <numOfProcesse
 
 # Download the source distributions for the latest release of all PyPI packages
 python -m dataset.run_validator --base_folder $DATA_HOME --n_jobs <numOfProcessess> --pypi [ --mirror <PyPI mirror site> ]
+
+# Get validator features for all PyPI releases.
+python -m dataset.run_validator --base_folder $DATA_HOME --n_jobs <numOfProcessess> --pypi_features
 ```
 
 10.  fit machine learning models on validator features
