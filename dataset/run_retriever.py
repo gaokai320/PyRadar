@@ -242,6 +242,37 @@ def download_remaining(
     )
 
 
+def download_dataset_remaining(
+    base_folder: str, n_jobs: int, chunk_size: int, mirror: Optional[str] = None
+):
+    remaining_df = pd.read_csv(
+        "data/dataset_remaining.csv", keep_default_na=False, low_memory=False
+    )
+    print(f"{len(remaining_df)} releases in total")
+    dist_col = MongoClient("127.0.0.1", port=27017)["radar"]["distribution_file_info"]
+    sdist_df = pd.DataFrame(
+        dist_col.find({"packagetype": "sdist"}, projection={"_id": 0, "packagetype": 0})
+    )
+    print(f"{len(sdist_df)} releases have source distributions")
+
+    remaining_df = remaining_df[["name", "version"]].merge(sdist_df)
+    remaining_latest_df = remaining_df[
+        remaining_df["filename"].str.endswith((".tar.gz", ".zip", ".egg", ".whl"))
+    ]
+
+    if mirror:
+        remaining_latest_df["url"] = remaining_latest_df["url"].apply(
+            lambda x: x.replace("https://files.pythonhosted.org", mirror)
+        )
+
+    dist_folder = os.path.join(base_folder, "distribution")
+    chunk = chunks(remaining_latest_df, chunk_size)
+    Parallel(n_jobs=n_jobs, backend="multiprocessing")(
+        delayed(download_main)(data, dist_folder)
+        for data in tqdm(chunk, file=sys.stdout)
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--base_folder", type=str, required=True)
@@ -274,6 +305,31 @@ if __name__ == "__main__":
     parser.add_argument("--final", default=False, action=argparse.BooleanOptionalAction)
     parser.add_argument(
         "--final_remaining", default=False, action=argparse.BooleanOptionalAction
+    )
+    parser.add_argument(
+        "--download_dataset_remaining",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+    )
+    parser.add_argument(
+        "--candidate_dataset_remaining",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+    )
+    parser.add_argument(
+        "--most_common_dataset_remaining",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+    )
+    parser.add_argument(
+        "--defork_dataset_remaining",
+        default=False,
+        action=argparse.BooleanOptionalAction,
+    )
+    parser.add_argument(
+        "--final_dataset_remaining",
+        default=False,
+        action=argparse.BooleanOptionalAction,
     )
     args = parser.parse_args()
 
@@ -332,4 +388,39 @@ if __name__ == "__main__":
             "data/deforked_remaining.json",
             "data/most_common_remaining.json",
             "data/retriever_dataset_remaining.csv",
+        )
+
+    if args.download_dataset_remaining:
+        download_dataset_remaining(
+            args.base_folder, args.n_jobs, args.chunk_size, args.mirror
+        )
+
+    if args.candidate_dataset_remaining:
+        get_candidates(
+            "data/dataset_remaining.csv",
+            "data/candidate_dataset_remaining.json",
+            args.base_folder,
+            args.n_jobs,
+            args.mirror,
+        )
+
+    if args.most_common_dataset_remaining:
+        get_sample_most_common(
+            "data/candidate_dataset_remaining.json",
+            "data/most_common_dataset_remaining.json",
+            args.n_candidate,
+        )
+
+    if args.defork_dataset_remaining:
+        do_defork(
+            "data/most_common_dataset_remaining.json",
+            "data/deforked_dataset_remaining.json",
+            args.chunk_size,
+        )
+
+    if args.final_dataset_remaining:
+        do_final(
+            "data/deforked_dataset_remaining.json",
+            "data/most_common_dataset_remaining.json",
+            "data/dataset_remaining.csv",
         )
