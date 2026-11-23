@@ -16,7 +16,7 @@ from pyradar.utils import DistReader, download, normalize_url, restore_url
 
 dist_info = MongoClient("127.0.0.1", 27017)["radar"]["distribution_file_info"]
 
-bad_blobs = json.load(open("data/bad_blobs.json"))
+bad_blobs = json.load(open("pyradar/bad_blobs.json"))
 logger = logging.getLogger(__name__)
 
 ACCEPTED_EXTENSIONS = (".tar.gz", ".zip", ".whl", ".egg")
