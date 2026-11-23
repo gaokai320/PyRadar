@@ -228,6 +228,8 @@ class WoCRetrieverV2:
     def get_final(self, n: int = 10, thresh: float = 0.6) -> Optional[str]:
         _, py_candidates, _ = self.get_candidates()
         final = select_final(py_candidates, n=n, session=self.session)
+        if final is None:
+            return None
         user, repo = final.split("/")[-2:]
         ratio1 = ratio(sub_pattern.sub("", self.name), sub_pattern.sub("", repo))
         ratio2 = ratio(sub_pattern.sub("", self.name), sub_pattern.sub("", user + repo))
